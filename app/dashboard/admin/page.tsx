@@ -40,7 +40,7 @@ export default async function AdminPage() {
           { label: "Total Customers", value: totalCustomers, sub: `${activeCustomers} active, ${pendingCustomers} pending`, icon: Users, color: "bg-gradient-to-br from-blue-500 to-indigo-600" },
           { label: "Total Messages Sent", value: totalMessages.toLocaleString(), icon: MessageSquare, color: "bg-gradient-to-br from-emerald-500 to-teal-600" },
           { label: "Active Campaigns", value: activeCampaigns, icon: Megaphone, color: "bg-gradient-to-br from-purple-500 to-pink-600" },
-          { label: "Active Plans", value: plans.filter(p => p.isActive).length, icon: TrendingUp, color: "bg-gradient-to-br from-orange-500 to-amber-600" },
+          { label: "Active Plans", value: plans.filter((p: any) => p.isActive).length, icon: TrendingUp, color: "bg-gradient-to-br from-orange-500 to-amber-600" },
         ].map((stat) => (
           <div key={stat.label} className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
             <div className="flex items-start justify-between">
