@@ -61,7 +61,7 @@ export default async function AdminPage() {
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-6">
           <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Recent Customers</h2>
           <div className="space-y-3">
-            {recentCustomers.map((c) => (
+            {recentCustomers.map((c: any) => (
               <div key={c.id} className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-slate-800 last:border-0">
                 <div>
                   <p className="text-sm font-medium text-slate-900 dark:text-white">{c.businessName}</p>
@@ -79,7 +79,7 @@ export default async function AdminPage() {
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-6">
           <h2 className="font-semibold text-slate-900 dark:text-white mb-4">Plans</h2>
           <div className="space-y-3">
-            {plans.map((plan) => (
+            {plans.map((plan: any) => (
               <div key={plan.id} className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-slate-800 last:border-0">
                 <div>
                   <p className="text-sm font-medium text-slate-900 dark:text-white">{plan.name}</p>
