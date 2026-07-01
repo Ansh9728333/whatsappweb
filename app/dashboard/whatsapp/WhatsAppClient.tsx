@@ -33,7 +33,7 @@ export default function WhatsAppClient({ initialAccounts }: Props) {
   // Linking states
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
   const [qrImage, setQrImage] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(59);
+  const [countdown, setCountdown] = useState(119);
   const [currentAccountId, setCurrentAccountId] = useState<string | null>(null);
   const [keysShown, setKeysShown] = useState<{ apiKey: string; apiSecret: string } | null>(null);
 
@@ -106,7 +106,7 @@ export default function WhatsAppClient({ initialAccounts }: Props) {
   // Initialize linking
   async function handleLinkInit() {
     setLoading(true);
-    setCountdown(59);
+    setCountdown(119);
     setKeysShown(null);
     try {
       const res = await fetch("/api/wa-accounts/link/init", { method: "POST" });
@@ -393,7 +393,12 @@ export default function WhatsAppClient({ initialAccounts }: Props) {
                 </div>
                 
                 <div className="w-56 h-56 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center border border-slate-100 dark:border-slate-800 mx-auto relative overflow-hidden">
-                  {qrImage ? (
+                  {countdown === 0 ? (
+                    <div className="flex flex-col items-center gap-2 text-slate-400 p-4 text-center">
+                      <ShieldAlert className="text-amber-500" size={28} />
+                      <span className="text-xs font-semibold text-slate-500">QR Code Expired</span>
+                    </div>
+                  ) : qrImage ? (
                     <img src={qrImage} alt="WhatsApp QR Code" className="w-48 h-48" />
                   ) : (
                     <div className="flex flex-col items-center gap-2 text-slate-400">

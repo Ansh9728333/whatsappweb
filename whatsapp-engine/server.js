@@ -51,9 +51,15 @@ app.post("/engine/sessions/start", async (req, res) => {
   console.log(`[Engine] Initializing session ${sessionId}`);
 
   const sessionDir = path.join(__dirname, "auth_info", sessionId);
-  if (!fs.existsSync(sessionDir)) {
-    fs.mkdirSync(sessionDir, { recursive: true });
+  try {
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  } catch (e) {
+    console.error(`[Engine] Failed to clean auth directory: ${e.message}`);
   }
+
+  fs.mkdirSync(sessionDir, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
