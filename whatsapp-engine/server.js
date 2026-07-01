@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
 const path = require("path");
 const fs = require("fs");
 
@@ -57,7 +57,11 @@ app.post("/engine/sessions/start", async (req, res) => {
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`[Engine] Using WhatsApp Web version ${version.join(".")}, isLatest: ${isLatest}`);
+
   const sock = makeWASocket({
+    version,
     auth: state,
     printQRInTerminal: false,
   });
