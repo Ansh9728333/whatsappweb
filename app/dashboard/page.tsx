@@ -264,7 +264,7 @@ export default async function DashboardPage() {
           { label: "Delivered", value: stats.deliveredToday, color: "bg-emerald-50 border-emerald-100", textColor: "text-emerald-600" },
           { label: "Read", value: stats.readToday, color: "bg-purple-50 border-purple-100", textColor: "text-purple-600" },
           { label: "Failed", value: stats.failedToday, color: "bg-red-50 border-red-100", textColor: "text-red-600" },
-        ].map((item) => (
+        ].map((item: any) => (
           <div key={item.label} className={`rounded-xl border p-4 ${item.color}`}>
             <p className="text-xs font-medium text-slate-500">{item.label}</p>
             <p className={`text-2xl font-bold mt-1 ${item.textColor}`}>{item.value}</p>
@@ -283,7 +283,7 @@ export default async function DashboardPage() {
             <p className="text-slate-400 text-sm">No messages yet.</p>
           ) : (
             <div className="space-y-3">
-              {stats.recentMessages.map((msg) => {
+              {stats.recentMessages.map((msg: any) => {
                 const s = statusConfig[msg.status] ?? statusConfig.SENT;
                 const StatusIcon = s.icon;
                 const content = msg.content as { text?: string };
@@ -321,7 +321,7 @@ export default async function DashboardPage() {
             <p className="text-slate-400 text-sm">No campaigns yet.</p>
           ) : (
             <div className="space-y-3">
-              {stats.recentCampaigns.map((campaign) => (
+              {stats.recentCampaigns.map((campaign: any) => (
                 <div
                   key={campaign.id}
                   className="flex items-center justify-between py-2 border-b border-slate-50 dark:border-slate-800 last:border-0"
