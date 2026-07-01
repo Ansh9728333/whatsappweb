@@ -1,0 +1,423 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─────────────────────────────────────────────
+// Auth & Users
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  CUSTOMER
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         UserRole  @default(CUSTOMER)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  customer     Customer?
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// Plans
+// ─────────────────────────────────────────────
+
+model Plan {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  description     String?
+  priceMonthly    Float     @default(0)
+  messageLimit    Int       @default(1000)
+  contactLimit    Int       @default(500)
+  features        Json?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  customers       Customer[]
+
+  @@map("plans")
+}
+
+// ─────────────────────────────────────────────
+// Customers
+// ─────────────────────────────────────────────
+
+enum CustomerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+model Customer {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  businessName   String
+  status         CustomerStatus @default(PENDING)
+  planId         String?
+  messagesUsed   Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan            Plan?           @relation(fields: [planId], references: [id])
+  apiKeys         ApiKey[]
+  whatsAppAccount WhatsAppAccount?
+  contacts        Contact[]
+  templates       MessageTemplate[]
+  conversations   Conversation[]
+  campaigns       Campaign[]
+  usageLogs       UsageLog[]
+  billingLogs     BillingLog[]
+
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// API Keys
+// ─────────────────────────────────────────────
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  customerId  String
+  name        String
+  keyHash     String    @unique  // SHA-256 hash of the actual key
+  keyPrefix   String            // First 8 chars of actual key for display
+  isActive    Boolean   @default(true)
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+// ─────────────────────────────────────────────
+// WhatsApp Accounts
+// ─────────────────────────────────────────────
+
+enum WAStatus {
+  PENDING
+  CONNECTED
+  DISCONNECTED
+  BANNED
+}
+
+model WhatsAppAccount {
+  id                String    @id @default(cuid())
+  customerId        String    @unique
+  phoneNumber       String
+  phoneNumberId     String    // Meta Phone Number ID
+  wabaId            String    // WhatsApp Business Account ID
+  businessId        String?   // Meta Business ID
+  displayName       String?
+  status            WAStatus  @default(PENDING)
+  // Access token stored ENCRYPTED — never exposed to frontend
+  encryptedToken    String?
+  webhookVerified   Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_accounts")
+}
+
+// ─────────────────────────────────────────────
+// Contacts
+// ─────────────────────────────────────────────
+
+model Tag {
+  id          String       @id @default(cuid())
+  customerId  String
+  name        String
+  color       String       @default("#6366f1")
+  createdAt   DateTime     @default(now())
+
+  contactTags ContactTag[]
+
+  @@unique([customerId, name])
+  @@map("tags")
+}
+
+model Contact {
+  id               String       @id @default(cuid())
+  customerId       String
+  name             String
+  phone            String
+  email            String?
+  notes            String?
+  customAttributes Json?
+  isBlocked        Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contactTags      ContactTag[]
+  conversations    Conversation[]
+  campaignRecipients CampaignRecipient[]
+
+  @@unique([customerId, phone])
+  @@map("contacts")
+}
+
+model ContactTag {
+  contactId   String
+  tagId       String
+  createdAt   DateTime  @default(now())
+
+  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@map("contact_tags")
+}
+
+// ─────────────────────────────────────────────
+// Message Templates
+// ─────────────────────────────────────────────
+
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+}
+
+model MessageTemplate {
+  id           String           @id @default(cuid())
+  customerId   String
+  name         String
+  language     String           @default("en_US")
+  category     TemplateCategory @default(MARKETING)
+  headerText   String?
+  bodyText     String
+  footerText   String?
+  buttons      Json?
+  variables    Json?
+  status       TemplateStatus   @default(DRAFT)
+  metaId       String?          // ID from Meta after submission
+  rejectionReason String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  customer     Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  campaigns    Campaign[]
+
+  @@unique([customerId, name])
+  @@map("message_templates")
+}
+
+// ─────────────────────────────────────────────
+// Conversations & Messages
+// ─────────────────────────────────────────────
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MessageType {
+  TEXT
+  TEMPLATE
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  STICKER
+  REACTION
+}
+
+model Conversation {
+  id              String    @id @default(cuid())
+  customerId      String
+  contactId       String
+  lastMessageAt   DateTime  @default(now())
+  unreadCount     Int       @default(0)
+  isOpen          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contact         Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages        Message[]
+
+  @@unique([customerId, contactId])
+  @@map("conversations")
+}
+
+model Message {
+  id               String           @id @default(cuid())
+  customerId       String
+  conversationId   String?
+  campaignId       String?
+  metaMessageId    String?          @unique  // ID from Meta
+  direction        MessageDirection
+  type             MessageType      @default(TEXT)
+  status           MessageStatus    @default(QUEUED)
+  toPhone          String
+  fromPhone        String?
+  content          Json             // { text?, templateName?, mediaUrl?, ... }
+  errorMessage     String?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  failedAt         DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  conversation     Conversation?    @relation(fields: [conversationId], references: [id])
+  campaign         Campaign?        @relation(fields: [campaignId], references: [id])
+
+  @@map("messages")
+}
+
+// ─────────────────────────────────────────────
+// Campaigns
+// ─────────────────────────────────────────────
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Campaign {
+  id              String         @id @default(cuid())
+  customerId      String
+  templateId      String?
+  name            String
+  status          CampaignStatus @default(DRAFT)
+  variableMapping Json?
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  totalRecipients Int            @default(0)
+  sentCount       Int            @default(0)
+  deliveredCount  Int            @default(0)
+  readCount       Int            @default(0)
+  failedCount     Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  template        MessageTemplate? @relation(fields: [templateId], references: [id])
+  recipients      CampaignRecipient[]
+  messages        Message[]
+
+  @@map("campaigns")
+}
+
+enum RecipientStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+model CampaignRecipient {
+  id          String          @id @default(cuid())
+  campaignId  String
+  contactId   String?
+  phone       String
+  variables   Json?
+  status      RecipientStatus @default(PENDING)
+  messageId   String?
+  errorMessage String?
+  processedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact     Contact?        @relation(fields: [contactId], references: [id])
+
+  @@map("campaign_recipients")
+}
+
+// ─────────────────────────────────────────────
+// Usage & Billing
+// ─────────────────────────────────────────────
+
+model UsageLog {
+  id          String    @id @default(cuid())
+  customerId  String
+  messageId   String?
+  type        String    // "TEMPLATE" | "TEXT" | "MEDIA"
+  cost        Float     @default(0)
+  createdAt   DateTime  @default(now())
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("usage_logs")
+}
+
+model BillingLog {
+  id          String    @id @default(cuid())
+  customerId  String
+  amount      Float
+  description String
+  type        String    // "INVOICE" | "PAYMENT" | "REFUND"
+  status      String    @default("PENDING")
+  createdAt   DateTime  @default(now())
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("billing_logs")
+}
+
+// ─────────────────────────────────────────────
+// Audit Log
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  userId      String?
+  action      String    // "CREATE_CUSTOMER" | "SUSPEND_CUSTOMER" | etc.
+  resource    String    // "Customer" | "ApiKey" | etc.
+  resourceId  String?
+  details     Json?
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+
+  user        User?     @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
