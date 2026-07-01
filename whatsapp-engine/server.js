@@ -70,6 +70,8 @@ app.post("/engine/sessions/start", async (req, res) => {
     version,
     auth: state,
     printQRInTerminal: false,
+    syncFullHistory: false,
+    shouldSyncHistoryMessage: () => false,
   });
 
   const sessionObj = {
