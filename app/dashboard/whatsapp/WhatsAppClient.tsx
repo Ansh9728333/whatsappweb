@@ -137,6 +137,10 @@ export default function WhatsAppClient({ initialAccounts }: Props) {
         if (!res.ok) return;
         const data = await res.json();
         
+        if (data.qrCode) {
+          setQrCodeData(data.qrCode);
+        }
+        
         if (data.status === "connected") {
           stopPolling();
           stopTimer();

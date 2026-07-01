@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
     const result = await getEngineSessionStatus(account.engineSessionId);
     let statusResponse = {
       status: result.status,
+      qrCode: result.qrCode ?? null,
       phoneNumber: result.phoneNumber,
       apiKey: null as string | null,
       apiSecret: null as string | null,
