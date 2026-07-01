@@ -16,7 +16,7 @@ if (!secretKey) {
 }
 const encodedKey = new TextEncoder().encode(secretKey);
 
-const COOKIE_NAME = "whatsify-session";
+const COOKIE_NAME = "whatsapp-system-session";
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
 
 export async function encrypt(payload: SessionPayload): Promise<string> {

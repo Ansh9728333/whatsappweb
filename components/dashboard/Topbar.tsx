@@ -46,7 +46,7 @@ export default function Topbar({
   const name = data?.user?.name ?? "User";
   const email = data?.user?.email ?? "";
   const role = data?.user?.role ?? "CUSTOMER";
-  const businessName = data?.customer?.businessName ?? "Whatsify Business";
+  const businessName = data?.customer?.businessName ?? "WhatsApp System Business";
   const messagesUsed = data?.customer?.messagesUsed ?? 0;
 
   return (

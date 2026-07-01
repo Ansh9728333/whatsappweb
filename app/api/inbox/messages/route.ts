@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { sendTextMessage } from "@/lib/whatsapp/messages";
-import { getCustomerWAConfig } from "@/lib/whatsapp/client";
+import { sendEngineMessage } from "@/lib/whatsapp/engine";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -48,15 +47,17 @@ export async function POST(request: NextRequest) {
   });
   if (!conversation) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const waConfig = await getCustomerWAConfig(session.customerId);
+  const waAccount = await prisma.whatsAppAccount.findFirst({
+    where: { customerId: session.customerId, status: "CONNECTED" },
+  });
   let metaMessageId: string | undefined;
   let status: "SENT" | "FAILED" = "SENT";
   let errorMessage: string | undefined;
 
-  if (waConfig) {
+  if (waAccount && waAccount.engineSessionId) {
     try {
-      const result = await sendTextMessage(waConfig.phoneNumberId, conversation.contact.phone, text, waConfig.accessToken);
-      metaMessageId = result.messages[0]?.id;
+      const result = await sendEngineMessage(waAccount.engineSessionId, conversation.contact.phone, text);
+      metaMessageId = result.messageId;
     } catch (err) {
       status = "FAILED";
       errorMessage = err instanceof Error ? err.message : "Send failed";

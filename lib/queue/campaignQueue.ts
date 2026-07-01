@@ -5,7 +5,6 @@ export interface CampaignJobData {
   campaignId: string;
   recipientId: string;
   customerId: string;
-  phoneNumberId: string;
   to: string;
   templateName: string;
   language: string;
@@ -27,7 +26,7 @@ export const campaignQueue = new Queue<CampaignJobData>("campaign-messages", {
 
 /**
  * Enqueue all recipients for a campaign.
- * Rate-limited to stay within Meta's 80 msg/sec limit.
+ * Rate-limited to stay within 80 msg/sec limit.
  */
 export async function enqueueCampaign(
   campaign: {
@@ -36,7 +35,6 @@ export async function enqueueCampaign(
     recipients: { id: string; phone: string; variables: Record<string, string> }[];
     templateName: string;
     language: string;
-    phoneNumberId: string;
   }
 ): Promise<void> {
   const jobs = campaign.recipients.map((recipient, index) => ({
@@ -45,7 +43,6 @@ export async function enqueueCampaign(
       campaignId: campaign.id,
       recipientId: recipient.id,
       customerId: campaign.customerId,
-      phoneNumberId: campaign.phoneNumberId,
       to: recipient.phone,
       templateName: campaign.templateName,
       language: campaign.language,

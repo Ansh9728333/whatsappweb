@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
 import { PrismaClient } from "@prisma/client";
-import { sendTemplateMessage, buildTemplateComponents } from "../whatsapp/messages";
+import { sendEngineMessage } from "../whatsapp/engine";
 import type { CampaignJobData } from "./campaignQueue";
 
 const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
@@ -15,7 +15,7 @@ console.log("🚀 Campaign worker starting...");
 const worker = new Worker<CampaignJobData>(
   "campaign-messages",
   async (job) => {
-    const { campaignId, recipientId, customerId, phoneNumberId, to, templateName, language, variables } = job.data;
+    const { campaignId, recipientId, customerId, to, templateName, variables } = job.data;
 
     console.log(`📤 Processing job ${job.id}: ${templateName} → ${to}`);
 
@@ -34,38 +34,49 @@ const worker = new Worker<CampaignJobData>(
         return { skipped: true };
       }
 
-      // Get customer's access token
+      // 1. Fetch connected WhatsApp Account
       const waAccount = await prisma.whatsAppAccount.findUnique({
         where: { customerId },
-        select: { encryptedToken: true },
+        select: { engineSessionId: true, status: true },
       });
 
-      const accessToken =
-        waAccount?.encryptedToken
-          ? Buffer.from(waAccount.encryptedToken, "base64").toString("utf-8")
-          : process.env.META_SYSTEM_USER_TOKEN;
+      if (!waAccount || waAccount.status !== "CONNECTED" || !waAccount.engineSessionId) {
+        throw new Error("WhatsApp account not connected");
+      }
 
-      // Build template components
-      const components = buildTemplateComponents(variables);
+      // 2. Fetch template details
+      const campaign = await prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { template: true },
+      });
 
-      // Send message
-      const result = await sendTemplateMessage(
-        phoneNumberId,
+      if (!campaign || !campaign.template) {
+        throw new Error("Campaign or template not found");
+      }
+
+      // 3. Construct message by substituting variables in the body text
+      let messageText = campaign.template.bodyText;
+      if (variables) {
+        for (const [key, val] of Object.entries(variables)) {
+          messageText = messageText.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
+        }
+      }
+
+      // 4. Send via Engine
+      const result = await sendEngineMessage(
+        waAccount.engineSessionId,
         to,
-        templateName,
-        language,
-        components,
-        accessToken
+        messageText
       );
 
-      metaMessageId = result.messages[0]?.id;
-      console.log(`✅ Sent to ${to}, Meta ID: ${metaMessageId}`);
-    } catch (err) {
+      metaMessageId = result.messageId;
+      console.log(`✅ Sent to ${to}, Engine Message ID: ${metaMessageId}`);
+    } catch (err: any) {
       status = "FAILED";
       errorMessage = err instanceof Error ? err.message : "Unknown error";
       console.error(`❌ Failed to send to ${to}:`, errorMessage);
 
-      // If this is the final retry, mark as permanently failed
+      // If this is the final retry, update counters
       if (job.attemptsMade >= (job.opts.attempts ?? 3) - 1) {
         await prisma.campaign.update({
           where: { id: campaignId },
@@ -83,10 +94,10 @@ const worker = new Worker<CampaignJobData>(
         campaignId,
         metaMessageId,
         direction: "OUTBOUND",
-        type: "TEMPLATE",
+        type: "TEXT",
         status,
         toPhone: to,
-        content: { templateName, variables },
+        content: { text: variables ? templateName : "" } as any, // Save mapping reference
         errorMessage,
         sentAt: status === "SENT" ? new Date() : undefined,
       },
@@ -118,7 +129,7 @@ const worker = new Worker<CampaignJobData>(
         data: {
           customerId,
           messageId: message.id,
-          type: "TEMPLATE",
+          type: "TEXT",
           cost: 0.005,
         },
       });
@@ -132,10 +143,10 @@ const worker = new Worker<CampaignJobData>(
   },
   {
     connection: redis as any,
-    concurrency: 10, // Process 10 jobs in parallel
+    concurrency: 10,
     limiter: {
-      max: 80,      // Max 80 jobs per window
-      duration: 1000, // Per 1 second
+      max: 80,
+      duration: 1000,
     },
   }
 );
@@ -156,7 +167,6 @@ worker.on("error", (err) => {
 async function checkCampaignCompletion(campaignId: string) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    include: { _count: { select: { recipients: true } } },
   });
 
   if (!campaign) return;

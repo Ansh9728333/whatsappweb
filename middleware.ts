@@ -29,7 +29,7 @@ export async function middleware(request: NextRequest) {
 
   // Protect dashboard routes
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/api/")) {
-    const token = request.cookies.get("whatsify-session")?.value;
+    const token = request.cookies.get("whatsapp-system-session")?.value;
     const session = await decrypt(token);
 
     if (!session) {

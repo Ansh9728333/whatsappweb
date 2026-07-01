@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Whatsify — WhatsApp Marketing Console",
+  title: "WhatsApp System — Console",
   description:
     "Professional SaaS console for managing WhatsApp marketing accounts, campaigns, and analytics.",
 };

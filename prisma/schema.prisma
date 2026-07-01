@@ -19,17 +19,19 @@ enum UserRole {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String
-  role         UserRole  @default(CUSTOMER)
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id               String            @id @default(cuid())
+  email            String            @unique
+  passwordHash     String
+  name             String
+  role             UserRole          @default(CUSTOMER)
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
-  customer     Customer?
-  auditLogs    AuditLog[]
+  customer         Customer?
+  auditLogs        AuditLog[]
+  whatsappAccounts WhatsAppAccount[]
+  apiKeys          ApiKey[]
 
   @@map("users")
 }
@@ -94,18 +96,24 @@ model Customer {
 // ─────────────────────────────────────────────
 
 model ApiKey {
-  id          String    @id @default(cuid())
-  customerId  String
-  name        String
-  keyHash     String    @unique  // SHA-256 hash of the actual key
-  keyPrefix   String            // First 8 chars of actual key for display
-  isActive    Boolean   @default(true)
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                String          @id @default(cuid())
+  customerId        String
+  userId            String?
+  whatsappAccountId String?
+  name              String
+  keyHash           String          @unique
+  keyPreview        String
+  secretHash        String?
+  secretPreview     String?
+  ipWhitelist       String?
+  isActive          Boolean         @default(true)
+  lastUsedAt        DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer          Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user              User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  whatsappAccount   WhatsAppAccount? @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
 
   @@map("api_keys")
 }
@@ -122,23 +130,54 @@ enum WAStatus {
 }
 
 model WhatsAppAccount {
-  id                String    @id @default(cuid())
-  customerId        String    @unique
-  phoneNumber       String
-  phoneNumberId     String    // Meta Phone Number ID
-  wabaId            String    // WhatsApp Business Account ID
-  businessId        String?   // Meta Business ID
-  displayName       String?
-  status            WAStatus  @default(PENDING)
-  // Access token stored ENCRYPTED — never exposed to frontend
-  encryptedToken    String?
-  webhookVerified   Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                    String            @id @default(cuid())
+  customerId            String            @unique
+  userId                String?
+  phoneNumber           String
+  displayName           String?
+  status                WAStatus          @default(PENDING)
+  
+  apiKeyHash            String?           @unique
+  apiKeyPreview         String?
+  apiSecretHash         String?
+  apiSecretPreview      String?
+  sessionSecretHash     String?
+  sessionSecretPreview  String?
+  
+  engineSessionId       String?           @unique
+  lastQrAt              DateTime?
+  lastConnectedAt       DateTime?
+  lastDisconnectedAt    DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
 
-  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer              Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user                  User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys               ApiKey[]
+  sessions              WhatsAppSession[]
 
   @@map("whatsapp_accounts")
+}
+
+model WhatsAppSession {
+  id                String          @id @default(cuid())
+  whatsappAccountId String
+  sessionId         String          @unique
+  status            String          // "ACTIVE" | "EXPIRED" | etc
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  whatsappAccount   WhatsAppAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_sessions")
+}
+
+model WebhookLog {
+  id          String    @id @default(cuid())
+  payload     Json
+  processedAt DateTime  @default(now())
+
+  @@map("webhook_logs")
 }
 
 // ─────────────────────────────────────────────

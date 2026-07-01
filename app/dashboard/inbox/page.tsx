@@ -2,7 +2,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import InboxClient from "./InboxClient";
 
-export const metadata = { title: "Inbox — Whatsify" };
+export const metadata = { title: "Inbox — WhatsApp System" };
 
 export default async function InboxPage() {
   const session = await requireAuth();

@@ -2,7 +2,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import CampaignsClient from "./CampaignsClient";
 
-export const metadata = { title: "Campaigns — Whatsify" };
+export const metadata = { title: "Campaigns — WhatsApp System" };
 
 export default async function CampaignsPage() {
   const session = await requireAuth();

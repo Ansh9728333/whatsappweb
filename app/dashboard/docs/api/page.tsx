@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { BookOpen, Key, Send, Terminal, CheckCircle2 } from "lucide-react";
 
-export const metadata = { title: "API Documentation — Whatsify" };
+export const metadata = { title: "API Documentation — WhatsApp System" };
 
 export default async function ApiDocsPage() {
   const session = await requireAuth();
@@ -11,7 +11,7 @@ export default async function ApiDocsPage() {
   const apiKey = session.customerId
     ? await prisma.apiKey.findFirst({
         where: { customerId: session.customerId, isActive: true },
-        select: { keyPrefix: true },
+        select: { keyPreview: true },
       })
     : null;
 
@@ -19,7 +19,7 @@ export default async function ApiDocsPage() {
     <div className="max-w-4xl space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <BookOpen size={24} className="text-emerald-500" /> Whatsify Platform API Docs
+          <BookOpen size={24} className="text-emerald-500" /> WhatsApp System API Docs
         </h1>
         <p className="text-slate-500 mt-1">
           Integrate WhatsApp messaging into your own applications using our developer-friendly REST API.
@@ -39,7 +39,7 @@ export default async function ApiDocsPage() {
           page.
         </p>
         <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-slate-300 overflow-x-auto">
-          Authorization: Bearer {apiKey ? `${apiKey.keyPrefix}••••••••••••••••` : "wf_live_your_api_key_here"}
+          Authorization: Bearer {apiKey ? `${apiKey.keyPreview}` : "wf_live_your_api_key_here"}
         </div>
       </section>
 
@@ -111,13 +111,13 @@ export default async function ApiDocsPage() {
 
           <h3 className="font-semibold text-xs text-slate-400 uppercase tracking-wider pt-2">Example CURL</h3>
           <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-slate-300 overflow-x-auto whitespace-pre">
-{`curl -X POST https://api.whatsify.io/api/v1/messages/send \\
-  -H "Authorization: Bearer ${apiKey ? `${apiKey.keyPrefix}••••••••` : "YOUR_API_KEY"}" \\
+{`curl -X POST https://api.whatsapp-system.com/api/v1/messages/send \\
+  -H "Authorization: Bearer ${apiKey ? `${apiKey.keyPreview}` : "YOUR_API_KEY"}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "to": "919876543210",
     "type": "text",
-    "text": "Hello from Whatsify API!"
+    "text": "Hello from WhatsApp System API!"
   }'`}
           </div>
 

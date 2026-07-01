@@ -2,7 +2,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import TemplatesClient from "./TemplatesClient";
 
-export const metadata = { title: "Templates — Whatsify" };
+export const metadata = { title: "Templates — WhatsApp System" };
 
 export default async function TemplatesPage() {
   const session = await requireAuth();

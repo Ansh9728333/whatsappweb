@@ -6,96 +6,81 @@ import {
   unauthorizedResponse,
   limitExceededResponse,
 } from "@/lib/api-middleware";
-import { sendTextMessage, sendTemplateMessage, buildTemplateComponents } from "@/lib/whatsapp/messages";
+import { sendEngineMessage } from "@/lib/whatsapp/engine";
 import { prisma } from "@/lib/prisma";
 
 const SendMessageSchema = z.object({
   to: z.string().min(7, "Phone number is required"),
-  type: z.enum(["text", "template"]),
-  text: z.string().optional(),
-  template_name: z.string().optional(),
-  language: z.string().default("en_US"),
-  variables: z.record(z.string(), z.string()).optional(),
+  message: z.string().min(1, "Message content is required"),
+  type: z.enum(["text"]).default("text"),
 });
 
 export async function POST(request: NextRequest) {
-  // 1. Authenticate
+  // 1. Authenticate API Key and Secret
   const ctx = await validateApiKey(request);
   if (!ctx) return unauthorizedResponse();
 
-  // 2. Check limits
+  // 2. Check Plan Limit
   if (!isWithinLimit(ctx)) return limitExceededResponse();
 
-  // 3. Validate body
-  const body = await request.json();
-  const parsed = SendMessageSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
-
-  const { to, type, text, template_name, language, variables } = parsed.data;
-
-  let metaMessageId: string | undefined;
-  let errorMessage: string | undefined;
-  let status: "SENT" | "FAILED" = "SENT";
-  let content: Record<string, unknown> = {};
-
+  // 3. Validate Body
   try {
-    if (type === "text") {
-      if (!text) throw new Error("text field is required for type=text");
-      const result = await sendTextMessage(ctx.phoneNumberId, to, text);
-      metaMessageId = result.messages[0]?.id;
-      content = { text };
-    } else if (type === "template") {
-      if (!template_name) throw new Error("template_name is required for type=template");
-      const components = variables ? buildTemplateComponents(variables) : [];
-      const result = await sendTemplateMessage(ctx.phoneNumberId, to, template_name, language, components);
-      metaMessageId = result.messages[0]?.id;
-      content = { templateName: template_name, variables };
+    const body = await request.json();
+    const parsed = SendMessageSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
-  } catch (err) {
-    status = "FAILED";
-    errorMessage = err instanceof Error ? err.message : "Unknown error";
-  }
 
-  // 4. Log message
-  const message = await prisma.message.create({
-    data: {
-      customerId: ctx.customerId,
-      metaMessageId,
-      direction: "OUTBOUND",
-      type: type === "template" ? "TEMPLATE" : "TEXT",
-      status,
-      toPhone: to,
-      content: content as any,
-      errorMessage,
-      sentAt: status === "SENT" ? new Date() : undefined,
-    },
-  });
+    const { to, message } = parsed.data;
 
-  // 5. Log usage
-  if (status === "SENT") {
+    // Fetch the connected WhatsApp number to return in the 'from' field
+    const waAccount = await prisma.whatsAppAccount.findFirst({
+      where: { engineSessionId: ctx.engineSessionId },
+      select: { phoneNumber: true },
+    });
+
+    // 4. Send Message via WhatsApp Web Engine
+    const result = await sendEngineMessage(ctx.engineSessionId, to, message);
+
+    // 5. Log Message in Database
+    const messageLog = await prisma.message.create({
+      data: {
+        customerId: ctx.customerId,
+        metaMessageId: result.messageId, // Use engine message ID
+        direction: "OUTBOUND",
+        type: "TEXT",
+        status: "SENT",
+        toPhone: to,
+        fromPhone: waAccount?.phoneNumber || "unknown",
+        content: { text: message } as any,
+        sentAt: new Date(),
+      },
+    });
+
+    // 6. Increment Messages Used
     await prisma.usageLog.create({
       data: {
         customerId: ctx.customerId,
-        messageId: message.id,
-        type: type.toUpperCase(),
+        messageId: messageLog.id,
+        type: "TEXT",
         cost: 0.005,
       },
     });
+
     await prisma.customer.update({
       where: { id: ctx.customerId },
       data: { messagesUsed: { increment: 1 } },
     });
-  }
 
-  return NextResponse.json(
-    {
-      messageId: message.id,
-      metaMessageId,
-      status,
-      ...(errorMessage && { error: errorMessage }),
-    },
-    { status: status === "SENT" ? 200 : 422 }
-  );
+    return NextResponse.json({
+      success: true,
+      messageId: result.messageId,
+      from: waAccount?.phoneNumber || "unknown",
+      to,
+      status: "sent",
+    });
+  } catch (err: any) {
+    console.error("Public send API error:", err);
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }

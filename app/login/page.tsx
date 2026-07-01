@@ -39,8 +39,8 @@ export default function LoginPage() {
               <Zap size={20} className="text-white" />
             </div>
             <div>
-              <p className="text-white font-bold text-xl tracking-widest">WHATSIFY</p>
-              <p className="text-emerald-400/70 text-xs">WhatsApp Business Platform</p>
+              <p className="text-white font-bold text-xl tracking-wider">WhatsApp System</p>
+              <p className="text-emerald-400/70 text-xs">WhatsApp Console Platform</p>
             </div>
           </div>
 

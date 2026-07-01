@@ -1,44 +1,106 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  verifyWebhook,
-  verifySignature,
-  handleWebhookEvent,
-  type WhatsAppWebhookPayload,
-} from "@/lib/whatsapp/webhook";
+import { prisma } from "@/lib/prisma";
 
-// GET — Meta webhook verification
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const mode = searchParams.get("hub.mode") ?? "";
-  const token = searchParams.get("hub.verify_token") ?? "";
-  const challenge = searchParams.get("hub.challenge") ?? "";
+export async function POST(request: NextRequest) {
+  const secret = request.headers.get("x-engine-secret");
+  const engineSecret = process.env.WHATSAPP_ENGINE_SECRET || "super-engine-secret";
 
-  const result = verifyWebhook(mode, token, challenge);
-  if (result !== null) {
-    return new Response(result, { status: 200 });
+  if (!secret || secret !== engineSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return new Response("Verification failed", { status: 403 });
+
+  try {
+    const body = await request.json();
+    const { sessionId, from, message, messageId } = body as {
+      sessionId: string;
+      from: string;
+      message: string;
+      messageId: string;
+    };
+
+    if (!sessionId || !from || !message || !messageId) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    // 1. Find the connected WhatsApp account
+    const waAccount = await prisma.whatsAppAccount.findUnique({
+      where: { engineSessionId: sessionId },
+    });
+
+    if (!waAccount || waAccount.status !== "CONNECTED") {
+      return NextResponse.json({ error: "Account not found or not connected" }, { status: 400 });
+    }
+
+    const customerId = waAccount.customerId;
+    const cleanFrom = from.split("@")[0].replace(/\D/g, "");
+
+    // Log the Webhook payload for audit trail
+    await prisma.webhookLog.create({
+      data: {
+        payload: body as any,
+      },
+    });
+
+    // 2. Upsert Contact
+    const contact = await prisma.contact.upsert({
+      where: {
+        customerId_phone: {
+          customerId,
+          phone: cleanFrom,
+        },
+      },
+      update: {},
+      create: {
+        customerId,
+        name: `WhatsApp User ${cleanFrom}`,
+        phone: cleanFrom,
+      },
+    });
+
+    // 3. Upsert Conversation
+    const conversation = await prisma.conversation.upsert({
+      where: {
+        customerId_contactId: {
+          customerId,
+          contactId: contact.id,
+        },
+      },
+      update: {
+        lastMessageAt: new Date(),
+        unreadCount: { increment: 1 },
+        isOpen: true,
+      },
+      create: {
+        customerId,
+        contactId: contact.id,
+        unreadCount: 1,
+        isOpen: true,
+      },
+    });
+
+    // 4. Save Inbound Message
+    await prisma.message.create({
+      data: {
+        customerId,
+        conversationId: conversation.id,
+        metaMessageId: messageId,
+        direction: "INBOUND",
+        type: "TEXT",
+        status: "DELIVERED",
+        toPhone: waAccount.phoneNumber,
+        fromPhone: cleanFrom,
+        content: { text: message } as any,
+        sentAt: new Date(),
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (err: any) {
+    console.error("Webhook processing error:", err);
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }
 
-// POST — Incoming webhook events
-export async function POST(request: NextRequest) {
-  const rawBody = await request.text();
-  const signature = request.headers.get("x-hub-signature-256") ?? "";
-
-  // Verify signature (optional in dev if APP_SECRET not set)
-  if (process.env.META_APP_SECRET && !verifySignature(rawBody, signature)) {
-    return new Response("Invalid signature", { status: 401 });
-  }
-
-  let payload: WhatsAppWebhookPayload;
-  try {
-    payload = JSON.parse(rawBody);
-  } catch {
-    return new Response("Invalid JSON", { status: 400 });
-  }
-
-  // Process async — return 200 immediately (Meta requires fast response)
-  handleWebhookEvent(payload).catch(console.error);
-
-  return new Response("OK", { status: 200 });
+export async function GET() {
+  return new Response("Webhook receiver active", { status: 200 });
 }

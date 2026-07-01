@@ -20,6 +20,7 @@ import {
   Menu,
   Zap,
   LogOut,
+  Phone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logoutAction } from "@/app/actions/auth";
@@ -42,6 +43,7 @@ const navConfig: { section: string; items: NavItem[]; adminOnly?: boolean }[] = 
   {
     section: "MESSAGING",
     items: [
+      { label: "WhatsApp", icon: Phone, href: "/dashboard/whatsapp" },
       { label: "Contacts", icon: Users, href: "/dashboard/contacts" },
       { label: "Templates", icon: FileText, href: "/dashboard/templates" },
       { label: "Inbox", icon: MessageSquare, href: "/dashboard/inbox" },
@@ -170,7 +172,7 @@ export default function Sidebar({ mobileOpen, onMobileClose, isAdmin = false }: 
             <Zap size={18} className="text-white" />
           </div>
           <div>
-            <span className="text-white font-bold text-lg tracking-widest block leading-none">WHATSIFY</span>
+            <span className="text-white font-bold text-lg tracking-wider block leading-none">WhatsApp System</span>
             <span className="text-emerald-400/60 text-[10px] tracking-wider">Business Platform</span>
           </div>
         </div>

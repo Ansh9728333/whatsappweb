@@ -2,7 +2,7 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import AdminCustomersClient from "./AdminCustomersClient";
 
-export const metadata = { title: "Customers — Admin — Whatsify" };
+export const metadata = { title: "Customers — Admin — WhatsApp System" };
 
 export default async function AdminCustomersPage() {
   await requireAdmin();

@@ -2,7 +2,7 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import ContactsClient from "./ContactsClient";
 
-export const metadata = { title: "Contacts — Whatsify" };
+export const metadata = { title: "Contacts — WhatsApp System" };
 
 export default async function ContactsPage() {
   const session = await requireAuth();

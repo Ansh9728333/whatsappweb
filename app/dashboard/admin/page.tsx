@@ -2,7 +2,7 @@ import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Users, MessageSquare, Megaphone, TrendingUp } from "lucide-react";
 
-export const metadata = { title: "Admin Overview — Whatsify" };
+export const metadata = { title: "Admin Overview — WhatsApp System" };
 
 export default async function AdminPage() {
   await requireAdmin();

@@ -110,18 +110,16 @@ async function main() {
   console.log("✅ Demo customer created:", demoUser.email);
 
   // ── Demo WhatsApp Account ──────────────────────────────────────────────────
-  await prisma.whatsAppAccount.upsert({
+  const waAccount = await prisma.whatsAppAccount.upsert({
     where: { customerId: demoCustomer.id },
     update: {},
     create: {
       customerId: demoCustomer.id,
-      phoneNumber: "+1 555-0100",
-      phoneNumberId: "demo_phone_number_id_123",
-      wabaId: "demo_waba_id_456",
-      businessId: "demo_business_id_789",
+      userId: demoUser.id,
+      phoneNumber: "15550100",
       displayName: "Acme Corp Support",
       status: "CONNECTED",
-      webhookVerified: true,
+      engineSessionId: "demo-session-id",
     },
   });
   console.log("✅ WhatsApp account created");
@@ -130,20 +128,28 @@ async function main() {
   const crypto = await import("crypto");
   const rawKey = `wf_live_${crypto.randomBytes(24).toString("hex")}`;
   const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
-  const keyPrefix = rawKey.substring(0, 12);
+  const keyPreview = `${rawKey.substring(0, 7)}...${rawKey.substring(rawKey.length - 4)}`;
+  
+  const rawSecret = crypto.randomBytes(32).toString("hex");
+  const secretHash = crypto.createHash("sha256").update(rawSecret).digest("hex");
+  const secretPreview = `${rawSecret.substring(0, 7)}...${rawSecret.substring(rawSecret.length - 4)}`;
 
   await prisma.apiKey.upsert({
     where: { keyHash },
     update: {},
     create: {
       customerId: demoCustomer.id,
+      userId: demoUser.id,
+      whatsappAccountId: waAccount.id,
       name: "Production Key",
       keyHash,
-      keyPrefix,
+      keyPreview,
+      secretHash,
+      secretPreview,
       isActive: true,
     },
   });
-  console.log("✅ API key created (prefix:", keyPrefix + "...)");
+  console.log("✅ API key created (preview:", keyPreview + ")");
 
   // ── Tags ───────────────────────────────────────────────────────────────────
   const tagNames = [

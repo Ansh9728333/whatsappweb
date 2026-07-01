@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-export const metadata = { title: "Plans — Admin — Whatsify" };
+export const metadata = { title: "Plans — Admin — WhatsApp System" };
 
 export default async function AdminPlansPage() {
   await requireAdmin();

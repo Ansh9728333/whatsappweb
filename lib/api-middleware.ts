@@ -4,14 +4,13 @@ import { prisma } from "@/lib/prisma";
 
 export interface ApiAuthContext {
   customerId: string;
-  phoneNumberId: string;
-  wabaId: string;
+  engineSessionId: string;
   planLimit: number;
   messagesUsed: number;
 }
 
 /**
- * Validate Bearer API key and return customer context.
+ * Validate Bearer API key + X-API-Secret header and return customer context.
  * Returns null if invalid/unauthorized.
  */
 export async function validateApiKey(
@@ -23,7 +22,11 @@ export async function validateApiKey(
   const rawKey = authHeader.slice(7);
   if (!rawKey) return null;
 
+  const rawSecret = request.headers.get("x-api-secret");
+  if (!rawSecret) return null;
+
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
+  const secretHash = createHash("sha256").update(rawSecret).digest("hex");
 
   const apiKey = await prisma.apiKey.findUnique({
     where: { keyHash },
@@ -31,15 +34,20 @@ export async function validateApiKey(
       customer: {
         include: {
           plan: true,
-          whatsAppAccount: true,
         },
       },
+      whatsappAccount: true,
     },
   });
 
   if (!apiKey || !apiKey.isActive) return null;
+  if (apiKey.secretHash !== secretHash) return null;
   if (!apiKey.customer || apiKey.customer.status !== "ACTIVE") return null;
-  if (!apiKey.customer.whatsAppAccount || apiKey.customer.whatsAppAccount.status !== "CONNECTED") return null;
+  
+  // Verify that there is a connected WhatsApp session
+  if (!apiKey.whatsappAccount || apiKey.whatsappAccount.status !== "CONNECTED" || !apiKey.whatsappAccount.engineSessionId) {
+    return null;
+  }
 
   // Update last used
   await prisma.apiKey.update({
@@ -49,8 +57,7 @@ export async function validateApiKey(
 
   return {
     customerId: apiKey.customerId,
-    phoneNumberId: apiKey.customer.whatsAppAccount.phoneNumberId,
-    wabaId: apiKey.customer.whatsAppAccount.wabaId,
+    engineSessionId: apiKey.whatsappAccount.engineSessionId,
     planLimit: apiKey.customer.plan?.messageLimit ?? 1000,
     messagesUsed: apiKey.customer.messagesUsed,
   };
@@ -66,7 +73,7 @@ export function isWithinLimit(ctx: ApiAuthContext): boolean {
 /**
  * Standard unauthorized response for API.
  */
-export function unauthorizedResponse(message = "Invalid or missing API key") {
+export function unauthorizedResponse(message = "Invalid or missing API key or secret") {
   return NextResponse.json(
     { error: message, code: "UNAUTHORIZED" },
     { status: 401 }
