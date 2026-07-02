@@ -71,7 +71,6 @@ app.post("/engine/sessions/start", async (req, res) => {
     auth: state,
     printQRInTerminal: false,
     syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false,
     browser: Browsers.appropriate("Desktop"),
   });
 
