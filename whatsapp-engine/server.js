@@ -13,6 +13,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 const ENGINE_SECRET = process.env.WHATSAPP_ENGINE_SECRET || "super-engine-secret";
+const AUTH_DIR = process.env.WHATSAPP_ENGINE_AUTH_DIR || path.join(__dirname, "auth_info");
 
 // In-memory store for active socket sessions
 const activeSessions = {};
@@ -50,7 +51,7 @@ app.post("/engine/sessions/start", async (req, res) => {
 
   console.log(`[Engine] Initializing session ${sessionId}`);
 
-  const sessionDir = path.join(__dirname, "auth_info", sessionId);
+  const sessionDir = path.join(AUTH_DIR, sessionId);
 
   // Clean up directory ONLY on fresh start (not on reconnect)
   try {
@@ -243,7 +244,7 @@ app.post("/engine/sessions/:sessionId/disconnect", async (req, res) => {
   } catch (e) {}
 
   delete activeSessions[sessionId];
-  const sessionDir = path.join(__dirname, "auth_info", sessionId);
+  const sessionDir = path.join(AUTH_DIR, sessionId);
   try {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   } catch (e) {}
@@ -253,7 +254,7 @@ app.post("/engine/sessions/:sessionId/disconnect", async (req, res) => {
 
 // Function to restore saved sessions on startup
 async function restoreSessions() {
-  const authRoot = path.join(__dirname, "auth_info");
+  const authRoot = AUTH_DIR;
   if (!fs.existsSync(authRoot)) return;
 
   try {
