@@ -41,7 +41,7 @@ app.post("/engine/sessions/start", async (req, res) => {
     if (s.status === "connected") {
       return res.json({ sessionId, status: "connected", phoneNumber: s.phoneNumber });
     }
-    // Otherwise clean up old one
+    // Otherwise clean up old socket connection
     try {
       s.sock.ev.removeAllListeners();
       s.sock.end();
@@ -51,6 +51,8 @@ app.post("/engine/sessions/start", async (req, res) => {
   console.log(`[Engine] Initializing session ${sessionId}`);
 
   const sessionDir = path.join(__dirname, "auth_info", sessionId);
+
+  // Clean up directory ONLY on fresh start (not on reconnect)
   try {
     if (fs.existsSync(sessionDir)) {
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -58,105 +60,113 @@ app.post("/engine/sessions/start", async (req, res) => {
   } catch (e) {
     console.error(`[Engine] Failed to clean auth directory: ${e.message}`);
   }
-
   fs.mkdirSync(sessionDir, { recursive: true });
-
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  console.log(`[Engine] Using WhatsApp Web version ${version.join(".")}, isLatest: ${isLatest}`);
-
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    syncFullHistory: false,
-    browser: Browsers.appropriate("Desktop"),
-  });
 
   const sessionObj = {
     sessionId,
-    sock,
+    sock: null,
     status: "pending",
     qr: null,
     phoneNumber: null,
-    expiresAt: Date.now() + 59 * 1000, // Expires in 59 seconds
+    expiresAt: Date.now() + 119 * 1000, // Expires in 2 minutes
   };
-
   activeSessions[sessionId] = sessionObj;
 
-  sock.ev.on("creds.update", saveCreds);
+  async function connectSession(isReconnect = false) {
+    try {
+      const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+      const { version, isLatest } = await fetchLatestBaileysVersion();
+      console.log(`[Engine] Connecting session ${sessionId} (reconnect: ${isReconnect}) using version ${version.join(".")}`);
 
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
+      const sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        syncFullHistory: false,
+        browser: Browsers.appropriate("Desktop"),
+      });
 
-    if (qr) {
-      sessionObj.qr = qr;
-      sessionObj.status = "pending";
-    }
+      sessionObj.sock = sock;
 
-    if (connection === "close") {
-      const shouldReconnect = (lastDisconnect?.error?.output?.statusCode) !== DisconnectReason.loggedOut;
-      console.log(`[Engine] Connection closed for ${sessionId}. Reconnecting: ${shouldReconnect}`);
-      
-      if (shouldReconnect) {
-        // Automatically reconnect if not logged out
-        setTimeout(() => {
-          // Trigger start again
-        }, 3000);
-      } else {
-        sessionObj.status = "disconnected";
-        sessionObj.qr = null;
-        sessionObj.phoneNumber = null;
-        delete activeSessions[sessionId];
-        try {
-          fs.rmSync(sessionDir, { recursive: true, force: true });
-        } catch (e) {}
-      }
-    } else if (connection === "open") {
-      sessionObj.status = "connected";
-      sessionObj.qr = null;
-      sessionObj.phoneNumber = sock.user.id.split(":")[0];
-      sessionObj.expiresAt = null;
-      console.log(`[Engine] WhatsApp session ${sessionId} successfully connected as ${sessionObj.phoneNumber}`);
-    }
-  });
+      sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("messages.upsert", async (m) => {
-    if (m.type !== "notify") return;
-    for (const msg of m.messages) {
-      if (msg.key.fromMe) continue;
+      sock.ev.on("connection.update", (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-      const from = msg.key.remoteJid;
-      const message = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
-      const messageId = msg.key.id;
-
-      if (message && from) {
-        console.log(`[Engine] Incoming message from ${from}: ${message}`);
-        const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
-        try {
-          const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-engine-secret": ENGINE_SECRET,
-            },
-            body: JSON.stringify({
-              sessionId,
-              from,
-              message,
-              messageId,
-            }),
-          });
-          if (!response.ok) {
-            console.error(`[Engine] Webhook forward failed: ${response.statusText}`);
-          }
-        } catch (err) {
-          console.error(`[Engine] Webhook error: ${err.message}`);
+        if (qr) {
+          sessionObj.qr = qr;
+          sessionObj.status = "pending";
         }
-      }
+
+        if (connection === "close") {
+          const shouldReconnect = (lastDisconnect?.error?.output?.statusCode) !== DisconnectReason.loggedOut;
+          console.log(`[Engine] Connection closed for ${sessionId}. Reconnecting: ${shouldReconnect}`);
+
+          if (shouldReconnect) {
+            setTimeout(() => {
+              connectSession(true).catch(console.error);
+            }, 3000);
+          } else {
+            sessionObj.status = "disconnected";
+            sessionObj.qr = null;
+            sessionObj.phoneNumber = null;
+            delete activeSessions[sessionId];
+            try {
+              fs.rmSync(sessionDir, { recursive: true, force: true });
+            } catch (e) {}
+          }
+        } else if (connection === "open") {
+          sessionObj.status = "connected";
+          sessionObj.qr = null;
+          sessionObj.phoneNumber = sock.user.id.split(":")[0];
+          sessionObj.expiresAt = null;
+          console.log(`[Engine] WhatsApp session ${sessionId} successfully connected as ${sessionObj.phoneNumber}`);
+        }
+      });
+
+      sock.ev.on("messages.upsert", async (m) => {
+        if (m.type !== "notify") return;
+        for (const msg of m.messages) {
+          if (msg.key.fromMe) continue;
+
+          const from = msg.key.remoteJid;
+          const message = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+          const messageId = msg.key.id;
+
+          if (message && from) {
+            console.log(`[Engine] Incoming message from ${from}: ${message}`);
+            const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
+            try {
+              const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-engine-secret": ENGINE_SECRET,
+                },
+                body: JSON.stringify({
+                  sessionId,
+                  from,
+                  message,
+                  messageId,
+                }),
+              });
+              if (!response.ok) {
+                console.error(`[Engine] Webhook forward failed: ${response.statusText}`);
+              }
+            } catch (err) {
+              console.error(`[Engine] Webhook error: ${err.message}`);
+            }
+          }
+        }
+      });
+
+    } catch (err) {
+      console.error(`[Engine] Error in session ${sessionId}:`, err);
     }
-  });
+  }
+
+  // Start connection
+  await connectSession(false);
 
   // Give Baileys a moment to emit the QR code before returning
   setTimeout(() => {
