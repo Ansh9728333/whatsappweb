@@ -493,5 +493,8 @@ async function restoreSessions() {
 
 app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Engine listening on port ${PORT}`);
-  restoreSessions().catch(console.error);
+  console.log(`[Engine] Waiting 15 seconds for rolling deploy cleanup before restoring sessions...`);
+  setTimeout(() => {
+    restoreSessions().catch(console.error);
+  }, 15000);
 });
