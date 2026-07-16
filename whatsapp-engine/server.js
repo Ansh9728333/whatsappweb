@@ -251,6 +251,80 @@ app.post("/engine/sessions/:sessionId/disconnect", async (req, res) => {
   res.json({ success: true });
 });
 
+// Function to restore saved sessions on startup
+async function restoreSessions() {
+  const authRoot = path.join(__dirname, "auth_info");
+  if (!fs.existsSync(authRoot)) return;
+
+  try {
+    const dirs = fs.readdirSync(authRoot).filter(file => {
+      return fs.statSync(path.join(authRoot, file)).isDirectory();
+    });
+
+    console.log(`[Engine] Found ${dirs.length} saved sessions. Restoring...`);
+
+    for (const sessionId of dirs) {
+      const sessionDir = path.join(authRoot, sessionId);
+      
+      // Create session object in memory
+      const sessionObj = {
+        sessionId,
+        sock: null,
+        status: "pending",
+        qr: null,
+        phoneNumber: null,
+        expiresAt: null, // Restored sessions don't expire like QR scans
+      };
+      activeSessions[sessionId] = sessionObj;
+
+      const connect = async (isReconnect = false) => {
+        try {
+          const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+          const { version } = await fetchLatestBaileysVersion();
+          console.log(`[Engine] Restoring session ${sessionId} (reconnect: ${isReconnect}) using version ${version.join(".")}`);
+          
+          const sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: false,
+            syncFullHistory: false,
+            browser: Browsers.appropriate("Desktop"),
+          });
+
+          sessionObj.sock = sock;
+          sock.ev.on("creds.update", saveCreds);
+
+          sock.ev.on("connection.update", (update) => {
+            const { connection, lastDisconnect } = update;
+            if (connection === "close") {
+              const shouldReconnect = (lastDisconnect?.error?.output?.statusCode) !== DisconnectReason.loggedOut;
+              console.log(`[Engine] Restored connection closed for ${sessionId}. Reconnecting: ${shouldReconnect}`);
+              if (shouldReconnect) {
+                setTimeout(() => connect(true).catch(console.error), 3000);
+              } else {
+                sessionObj.status = "disconnected";
+                delete activeSessions[sessionId];
+                try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch (e) {}
+              }
+            } else if (connection === "open") {
+              sessionObj.status = "connected";
+              sessionObj.phoneNumber = sock.user.id.split(":")[0];
+              console.log(`[Engine] Restored session ${sessionId} successfully connected as ${sessionObj.phoneNumber}`);
+            }
+          });
+        } catch (e) {
+          console.error(`[Engine] Failed to restore session ${sessionId}:`, e);
+        }
+      };
+
+      connect(false).catch(console.error);
+    }
+  } catch (err) {
+    console.error("[Engine] Error restoring sessions:", err);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Engine listening on port ${PORT}`);
+  restoreSessions().catch(console.error);
 });
