@@ -282,8 +282,35 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
     let payload = {};
 
     if (mediaUrl) {
-      // Auto-detect media type from file extension if not provided
       let type = mediaType;
+      let detectedFilename = "file";
+      let detectedMimetype = "application/octet-stream";
+
+      try {
+        const headRes = await fetch(mediaUrl, { method: "HEAD" });
+        if (headRes.ok) {
+          const contentType = headRes.headers.get("content-type");
+          if (contentType) {
+            detectedMimetype = contentType.split(";")[0].trim();
+            if (!type) {
+              if (detectedMimetype.startsWith("image/")) type = "image";
+              else if (detectedMimetype.startsWith("video/")) type = "video";
+              else if (detectedMimetype.startsWith("audio/")) type = "audio";
+              else type = "document";
+            }
+          }
+          const contentDisp = headRes.headers.get("content-disposition");
+          if (contentDisp) {
+            const filenameMatch = contentDisp.match(/filename="?([^"]+)"?/);
+            if (filenameMatch && filenameMatch[1]) {
+              detectedFilename = filenameMatch[1];
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[Engine] HEAD request failed for media URL: ${e.message}`);
+      }
+
       if (!type) {
         const ext = mediaUrl.split('.').pop().toLowerCase().split('?')[0];
         if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) {
@@ -297,6 +324,16 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
         }
       }
 
+      if (detectedFilename === "file") {
+        const ext = mediaUrl.split('.').pop().toLowerCase().split('?')[0];
+        if (ext && ext.length <= 4 && !ext.includes("/")) {
+          detectedFilename = `attachment.${ext}`;
+        } else {
+          const defaultExtensions = { image: "jpg", video: "mp4", audio: "mp3", document: "pdf" };
+          detectedFilename = `attachment.${defaultExtensions[type] || "bin"}`;
+        }
+      }
+
       if (type === "image") {
         payload = { image: { url: mediaUrl }, caption: message };
       } else if (type === "video") {
@@ -304,16 +341,10 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
       } else if (type === "audio") {
         payload = { audio: { url: mediaUrl }, mimetype: "audio/mp4" };
       } else {
-        const ext = mediaUrl.split('.').pop().toLowerCase().split('?')[0];
-        let mimetype = "application/octet-stream";
-        if (ext === "pdf") mimetype = "application/pdf";
-        else if (ext === "doc" || ext === "docx") mimetype = "application/msword";
-        else if (ext === "xls" || ext === "xlsx") mimetype = "application/vnd.ms-excel";
-
         payload = { 
           document: { url: mediaUrl }, 
-          mimetype, 
-          fileName: `File.${ext}`,
+          mimetype: detectedMimetype, 
+          fileName: detectedFilename,
           caption: message 
         };
       }
