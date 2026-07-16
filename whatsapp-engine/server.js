@@ -332,6 +332,29 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
         }
       }
 
+      // Ensure proper mimetype mapping from filename extension for WhatsApp Mobile compatibility
+      const lowerFilename = detectedFilename.toLowerCase();
+      if (lowerFilename.endsWith(".pdf")) {
+        detectedMimetype = "application/pdf";
+      } else if (lowerFilename.endsWith(".png")) {
+        detectedMimetype = "image/png";
+      } else if (lowerFilename.endsWith(".jpg") || lowerFilename.endsWith(".jpeg")) {
+        detectedMimetype = "image/jpeg";
+      } else if (lowerFilename.endsWith(".docx")) {
+        detectedMimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      } else if (lowerFilename.endsWith(".xlsx")) {
+        detectedMimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      }
+
+      // Force-append correct extension to filename if mimetype is known
+      if (detectedMimetype === "application/pdf" && !lowerFilename.endsWith(".pdf")) {
+        detectedFilename = `${detectedFilename}.pdf`;
+      } else if (detectedMimetype === "image/png" && !lowerFilename.endsWith(".png")) {
+        detectedFilename = `${detectedFilename}.png`;
+      } else if (detectedMimetype === "image/jpeg" && !lowerFilename.endsWith(".jpg") && !lowerFilename.endsWith(".jpeg")) {
+        detectedFilename = `${detectedFilename}.jpg`;
+      }
+
       if (type === "image") {
         payload = { image: { url: mediaUrl }, caption: message };
       } else if (type === "video") {
