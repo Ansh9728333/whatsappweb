@@ -18,6 +18,64 @@ const AUTH_DIR = process.env.WHATSAPP_ENGINE_AUTH_DIR || path.join(__dirname, "a
 // In-memory store for active socket sessions
 const activeSessions = {};
 
+const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
+
+async function saveCredsToDatabase(sessionId, sessionDir) {
+  try {
+    const credsPath = path.join(sessionDir, "creds.json");
+    if (!fs.existsSync(credsPath)) return;
+    const credsData = fs.readFileSync(credsPath, "utf-8");
+
+    const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp/session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-engine-secret": ENGINE_SECRET,
+      },
+      body: JSON.stringify({
+        sessionId,
+        data: credsData,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[Engine] Failed to sync credentials to DB: ${response.statusText}`);
+    } else {
+      console.log(`[Engine] Successfully synced credentials to DB for ${sessionId}`);
+    }
+  } catch (err) {
+    console.error(`[Engine] Sync credentials error: ${err.message}`);
+  }
+}
+
+async function loadCredsFromDatabase(sessionId, sessionDir) {
+  try {
+    const credsPath = path.join(sessionDir, "creds.json");
+    // If already exists locally, don't overwrite
+    if (fs.existsSync(credsPath)) return true;
+
+    console.log(`[Engine] Attempting to load credentials from DB for ${sessionId}...`);
+    const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp/session?sessionId=${sessionId}`, {
+      method: "GET",
+      headers: {
+        "x-engine-secret": ENGINE_SECRET,
+      },
+    });
+
+    if (!response.ok) return false;
+    const resData = await response.json();
+    if (resData.data) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(credsPath, resData.data, "utf-8");
+      console.log(`[Engine] Loaded credentials from DB for ${sessionId}`);
+      return true;
+    }
+  } catch (err) {
+    console.error(`[Engine] Load credentials error: ${err.message}`);
+  }
+  return false;
+}
+
 // Authentication Middleware
 function authMiddleware(req, res, next) {
   const secret = req.headers["x-engine-secret"];
@@ -89,7 +147,10 @@ app.post("/engine/sessions/start", async (req, res) => {
 
       sessionObj.sock = sock;
 
-      sock.ev.on("creds.update", saveCreds);
+      sock.ev.on("creds.update", async () => {
+        await saveCreds();
+        await saveCredsToDatabase(sessionId, sessionDir);
+      });
 
       sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -255,16 +316,43 @@ app.post("/engine/sessions/:sessionId/disconnect", async (req, res) => {
 // Function to restore saved sessions on startup
 async function restoreSessions() {
   const authRoot = AUTH_DIR;
-  if (!fs.existsSync(authRoot)) return;
+  if (!fs.existsSync(authRoot)) {
+    fs.mkdirSync(authRoot, { recursive: true });
+  }
 
   try {
-    const dirs = fs.readdirSync(authRoot).filter(file => {
+    let sessionIds = [];
+
+    // 1. Get session IDs from local directory
+    const localDirs = fs.readdirSync(authRoot).filter(file => {
       return fs.statSync(path.join(authRoot, file)).isDirectory();
     });
+    sessionIds = [...localDirs];
 
-    console.log(`[Engine] Found ${dirs.length} saved sessions. Restoring...`);
+    // 2. Fetch active session IDs from Next.js database list
+    console.log(`[Engine] Fetching active sessions from database...`);
+    try {
+      const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp/session`, {
+        method: "GET",
+        headers: { "x-engine-secret": ENGINE_SECRET },
+      });
+      if (response.ok) {
+        const resData = await response.json();
+        if (resData.sessions && Array.isArray(resData.sessions)) {
+          for (const sid of resData.sessions) {
+            if (!sessionIds.includes(sid)) {
+              sessionIds.push(sid);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[Engine] Failed to fetch session list from DB: ${e.message}`);
+    }
 
-    for (const sessionId of dirs) {
+    console.log(`[Engine] Found ${sessionIds.length} sessions to restore:`, sessionIds);
+
+    for (const sessionId of sessionIds) {
       const sessionDir = path.join(authRoot, sessionId);
       
       // Create session object in memory
@@ -280,6 +368,9 @@ async function restoreSessions() {
 
       const connect = async (isReconnect = false) => {
         try {
+          // Try to load credentials from database if they don't exist locally
+          await loadCredsFromDatabase(sessionId, sessionDir);
+
           const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
           const { version } = await fetchLatestBaileysVersion();
           console.log(`[Engine] Restoring session ${sessionId} (reconnect: ${isReconnect}) using version ${version.join(".")}`);
@@ -293,7 +384,11 @@ async function restoreSessions() {
           });
 
           sessionObj.sock = sock;
-          sock.ev.on("creds.update", saveCreds);
+
+          sock.ev.on("creds.update", async () => {
+            await saveCreds();
+            await saveCredsToDatabase(sessionId, sessionDir);
+          });
 
           sock.ev.on("connection.update", (update) => {
             const { connection, lastDisconnect } = update;

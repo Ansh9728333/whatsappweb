@@ -164,6 +164,7 @@ model WhatsAppSession {
   whatsappAccountId String
   sessionId         String          @unique
   status            String          // "ACTIVE" | "EXPIRED" | etc
+  data              String          @default("")
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
