@@ -292,12 +292,10 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
           const contentType = headRes.headers.get("content-type");
           if (contentType) {
             detectedMimetype = contentType.split(";")[0].trim();
-            if (!type) {
-              if (detectedMimetype.startsWith("image/")) type = "image";
-              else if (detectedMimetype.startsWith("video/")) type = "video";
-              else if (detectedMimetype.startsWith("audio/")) type = "audio";
-              else type = "document";
-            }
+            if (detectedMimetype.startsWith("image/")) type = "image";
+            else if (detectedMimetype.startsWith("video/")) type = "video";
+            else if (detectedMimetype.startsWith("audio/")) type = "audio";
+            else if (!type || type === "text") type = "document";
           }
           const contentDisp = headRes.headers.get("content-disposition");
           if (contentDisp) {
