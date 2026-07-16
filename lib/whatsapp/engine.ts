@@ -52,10 +52,14 @@ export async function disconnectEngineSession(sessionId: string): Promise<{ succ
 export async function sendEngineMessage(
   sessionId: string,
   to: string,
-  message: string
+  message: string,
+  mediaUrl?: string,
+  mediaType?: string
 ): Promise<{ success: boolean; messageId: string }> {
   return fetchEngine<{ success: boolean; messageId: string }>("POST", `/engine/sessions/${sessionId}/send`, {
     to,
     message,
+    mediaUrl,
+    mediaType,
   });
 }

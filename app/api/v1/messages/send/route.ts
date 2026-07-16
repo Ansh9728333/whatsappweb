@@ -11,8 +11,9 @@ import { prisma } from "@/lib/prisma";
 
 const SendMessageSchema = z.object({
   to: z.string().min(7, "Phone number is required"),
-  message: z.string().min(1, "Message content is required"),
-  type: z.enum(["text"]).default("text"),
+  message: z.string().optional().default(""),
+  type: z.enum(["text", "image", "video", "document", "audio"]).optional().default("text"),
+  mediaUrl: z.string().url("Invalid mediaUrl").optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { to, message } = parsed.data;
+    const { to, message, type, mediaUrl } = parsed.data;
 
     // Fetch the connected WhatsApp number to return in the 'from' field
     const waAccount = await prisma.whatsAppAccount.findFirst({
@@ -40,7 +41,22 @@ export async function POST(request: NextRequest) {
     });
 
     // 4. Send Message via WhatsApp Web Engine
-    const result = await sendEngineMessage(ctx.engineSessionId, to, message);
+    const result = await sendEngineMessage(
+      ctx.engineSessionId,
+      to,
+      message,
+      mediaUrl,
+      mediaUrl ? type : undefined
+    );
+
+    // Determine message type for DB log
+    let dbType: "TEXT" | "IMAGE" | "VIDEO" | "AUDIO" | "DOCUMENT" = "TEXT";
+    if (mediaUrl) {
+      if (type === "image") dbType = "IMAGE";
+      else if (type === "video") dbType = "VIDEO";
+      else if (type === "audio") dbType = "AUDIO";
+      else dbType = "DOCUMENT";
+    }
 
     // 5. Log Message in Database
     const messageLog = await prisma.message.create({
@@ -48,11 +64,13 @@ export async function POST(request: NextRequest) {
         customerId: ctx.customerId,
         metaMessageId: result.messageId, // Use engine message ID
         direction: "OUTBOUND",
-        type: "TEXT",
+        type: dbType,
         status: "SENT",
         toPhone: to,
         fromPhone: waAccount?.phoneNumber || "unknown",
-        content: { text: message } as any,
+        content: mediaUrl 
+          ? { text: message, mediaUrl } 
+          : { text: message },
         sentAt: new Date(),
       },
     });
@@ -62,8 +80,8 @@ export async function POST(request: NextRequest) {
       data: {
         customerId: ctx.customerId,
         messageId: messageLog.id,
-        type: "TEXT",
-        cost: 0.005,
+        type: dbType,
+        cost: mediaUrl ? 0.01 : 0.005, // Media messages have higher cost
       },
     });
 

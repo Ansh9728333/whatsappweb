@@ -270,7 +270,7 @@ app.get("/engine/sessions/:sessionId/status", (req, res) => {
 // Send message
 app.post("/engine/sessions/:sessionId/send", async (req, res) => {
   const { sessionId } = req.params;
-  const { to, message } = req.body;
+  const { to, message, mediaUrl, mediaType } = req.body;
 
   const s = activeSessions[sessionId];
   if (!s || s.status !== "connected") {
@@ -279,7 +279,49 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
 
   try {
     const formattedTo = to.includes("@s.whatsapp.net") ? to : `${to.replace(/\D/g, "")}@s.whatsapp.net`;
-    const sentMsg = await s.sock.sendMessage(formattedTo, { text: message });
+    let payload = {};
+
+    if (mediaUrl) {
+      // Auto-detect media type from file extension if not provided
+      let type = mediaType;
+      if (!type) {
+        const ext = mediaUrl.split('.').pop().toLowerCase().split('?')[0];
+        if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) {
+          type = "image";
+        } else if (["mp4", "3gp", "m4v", "mov"].includes(ext)) {
+          type = "video";
+        } else if (["mp3", "ogg", "wav", "m4a"].includes(ext)) {
+          type = "audio";
+        } else {
+          type = "document";
+        }
+      }
+
+      if (type === "image") {
+        payload = { image: { url: mediaUrl }, caption: message };
+      } else if (type === "video") {
+        payload = { video: { url: mediaUrl }, caption: message };
+      } else if (type === "audio") {
+        payload = { audio: { url: mediaUrl }, mimetype: "audio/mp4" };
+      } else {
+        const ext = mediaUrl.split('.').pop().toLowerCase().split('?')[0];
+        let mimetype = "application/octet-stream";
+        if (ext === "pdf") mimetype = "application/pdf";
+        else if (ext === "doc" || ext === "docx") mimetype = "application/msword";
+        else if (ext === "xls" || ext === "xlsx") mimetype = "application/vnd.ms-excel";
+
+        payload = { 
+          document: { url: mediaUrl }, 
+          mimetype, 
+          fileName: `File.${ext}`,
+          caption: message 
+        };
+      }
+    } else {
+      payload = { text: message };
+    }
+
+    const sentMsg = await s.sock.sendMessage(formattedTo, payload);
     res.json({
       success: true,
       messageId: sentMsg.key.id,
