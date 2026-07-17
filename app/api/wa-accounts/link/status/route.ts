@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { getEngineSessionStatus } from "@/lib/whatsapp/engine";
+import { getEngineSessionStatus, ensureEngineSessionActive } from "@/lib/whatsapp/engine";
 import crypto from "crypto";
 
 export async function GET(request: NextRequest) {
@@ -32,8 +32,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ status: "disconnected" });
     }
 
-    // Call Engine status
-    const result = await getEngineSessionStatus(account.engineSessionId);
+    // Call Engine status with error fallback
+    let result = await getEngineSessionStatus(account.engineSessionId)
+      .catch(() => ({ status: "disconnected", qrCode: null, phoneNumber: null }));
+
+    // Self-healing: if the engine says disconnected but the DB says CONNECTED, try to restore!
+    if (result.status !== "connected" && account.status === "CONNECTED") {
+      console.log(`[Status API] Session ${account.engineSessionId} disconnected in engine, triggering self-healing restore...`);
+      const restored = await ensureEngineSessionActive(account.engineSessionId);
+      if (restored) {
+        result = await getEngineSessionStatus(account.engineSessionId)
+          .catch(() => ({ status: "disconnected", qrCode: null, phoneNumber: null }));
+      }
+    }
+
     let statusResponse = {
       status: result.status,
       qrCode: result.qrCode ?? null,

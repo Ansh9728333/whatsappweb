@@ -18,7 +18,7 @@ const AUTH_DIR = process.env.WHATSAPP_ENGINE_AUTH_DIR || path.join(__dirname, "a
 // In-memory store for active socket sessions
 const activeSessions = {};
 
-const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
+let dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
 
 async function saveCredsToDatabase(sessionId, sessionDir) {
   try {
@@ -82,60 +82,60 @@ function authMiddleware(req, res, next) {
   if (!secret || secret !== ENGINE_SECRET) {
     return res.status(401).json({ error: "Unauthorized: Invalid Engine Secret" });
   }
+
+  const nextDashboardUrl = req.headers["x-dashboard-url"];
+  if (nextDashboardUrl) {
+    dashboardUrl = nextDashboardUrl;
+  }
+
   next();
 }
 
 app.use(authMiddleware);
 
-// Initialize a session
-app.post("/engine/sessions/start", async (req, res) => {
-  const { sessionId } = req.body;
-  if (!sessionId) {
-    return res.status(400).json({ error: "sessionId is required" });
-  }
-
-  // If session already exists and is connected, don't restart
-  if (activeSessions[sessionId]) {
-    const s = activeSessions[sessionId];
-    if (s.status === "connected") {
-      return res.json({ sessionId, status: "connected", phoneNumber: s.phoneNumber });
-    }
-    // Otherwise clean up old socket connection
-    try {
-      s.sock.ev.removeAllListeners();
-      s.sock.end();
-    } catch (e) {}
-  }
-
-  console.log(`[Engine] Initializing session ${sessionId}`);
-
+// Shared session connection helper
+async function connectSession(sessionId, isRestore = false) {
   const sessionDir = path.join(AUTH_DIR, sessionId);
-
-  // Clean up directory ONLY on fresh start (not on reconnect)
-  try {
-    if (fs.existsSync(sessionDir)) {
-      fs.rmSync(sessionDir, { recursive: true, force: true });
-    }
-  } catch (e) {
-    console.error(`[Engine] Failed to clean auth directory: ${e.message}`);
+  if (!fs.existsSync(sessionDir)) {
+    fs.mkdirSync(sessionDir, { recursive: true });
   }
-  fs.mkdirSync(sessionDir, { recursive: true });
 
-  const sessionObj = {
-    sessionId,
-    sock: null,
-    status: "pending",
-    qr: null,
-    phoneNumber: null,
-    expiresAt: Date.now() + 119 * 1000, // Expires in 2 minutes
-  };
-  activeSessions[sessionId] = sessionObj;
+  let sessionObj = activeSessions[sessionId];
+  if (!sessionObj) {
+    sessionObj = {
+      sessionId,
+      sock: null,
+      status: "pending",
+      qr: null,
+      phoneNumber: null,
+      expiresAt: isRestore ? null : (Date.now() + 119 * 1000), // QR scan expires in 2 mins
+    };
+    activeSessions[sessionId] = sessionObj;
+  } else {
+    // If there is already an active socket, close it
+    if (sessionObj.sock) {
+      try {
+        sessionObj.sock.ev.removeAllListeners();
+        sessionObj.sock.end();
+      } catch (e) {}
+    }
+    sessionObj.status = "pending";
+    sessionObj.qr = null;
+    if (!isRestore) {
+      sessionObj.expiresAt = Date.now() + 119 * 1000;
+    }
+  }
 
-  async function connectSession(isReconnect = false) {
+  const connect = async (isReconnect = false) => {
     try {
+      if (isRestore) {
+        // Try to load credentials from database if they don't exist locally
+        await loadCredsFromDatabase(sessionId, sessionDir);
+      }
+
       const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-      const { version, isLatest } = await fetchLatestBaileysVersion();
-      console.log(`[Engine] Connecting session ${sessionId} (reconnect: ${isReconnect}) using version ${version.join(".")}`);
+      const { version } = await fetchLatestBaileysVersion();
+      console.log(`[Engine] Connecting session ${sessionId} (reconnect: ${isReconnect}, restore: ${isRestore})`);
 
       const sock = makeWASocket({
         version,
@@ -166,7 +166,7 @@ app.post("/engine/sessions/start", async (req, res) => {
 
           if (shouldReconnect) {
             setTimeout(() => {
-              connectSession(true).catch(console.error);
+              connect(true).catch(console.error);
             }, 3000);
           } else {
             sessionObj.status = "disconnected";
@@ -197,7 +197,6 @@ app.post("/engine/sessions/start", async (req, res) => {
 
           if (message && from) {
             console.log(`[Engine] Incoming message from ${from}: ${message}`);
-            const dashboardUrl = process.env.DASHBOARD_URL || "http://localhost:3000";
             try {
               const response = await fetch(`${dashboardUrl}/api/webhook/whatsapp`, {
                 method: "POST",
@@ -223,12 +222,41 @@ app.post("/engine/sessions/start", async (req, res) => {
       });
 
     } catch (err) {
-      console.error(`[Engine] Error in session ${sessionId}:`, err);
+      console.error(`[Engine] Error in connection helper for ${sessionId}:`, err);
+    }
+  };
+
+  await connect(false);
+}
+
+// Initialize a session
+app.post("/engine/sessions/start", async (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: "sessionId is required" });
+  }
+
+  // If session already exists and is connected, don't restart
+  if (activeSessions[sessionId]) {
+    const s = activeSessions[sessionId];
+    if (s.status === "connected") {
+      return res.json({ sessionId, status: "connected", phoneNumber: s.phoneNumber });
     }
   }
 
-  // Start connection
-  await connectSession(false);
+  console.log(`[Engine] Initializing session ${sessionId}`);
+
+  const sessionDir = path.join(AUTH_DIR, sessionId);
+  try {
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  } catch (e) {
+    console.error(`[Engine] Failed to clean auth directory: ${e.message}`);
+  }
+
+  await connectSession(sessionId, false);
+  const sessionObj = activeSessions[sessionId];
 
   // Give Baileys a moment to emit the QR code before returning
   setTimeout(() => {
@@ -236,7 +264,7 @@ app.post("/engine/sessions/start", async (req, res) => {
       sessionId,
       status: sessionObj.status,
       qrCode: sessionObj.qr,
-      expiresAt: new Date(sessionObj.expiresAt).toISOString(),
+      expiresAt: sessionObj.expiresAt ? new Date(sessionObj.expiresAt).toISOString() : null,
     });
   }, 1000);
 });
@@ -384,6 +412,29 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
   }
 });
 
+// Restore credentials from Next.js on demand (self-healing)
+app.post("/engine/sessions/:sessionId/restore", async (req, res) => {
+  const { sessionId } = req.params;
+  const { data } = req.body;
+
+  if (!data) {
+    return res.status(400).json({ error: "Missing session credentials data" });
+  }
+
+  console.log(`[Engine] On-demand session restore triggered for ${sessionId}`);
+  const sessionDir = path.join(AUTH_DIR, sessionId);
+  if (!fs.existsSync(sessionDir)) {
+    fs.mkdirSync(sessionDir, { recursive: true });
+  }
+
+  const credsPath = path.join(sessionDir, "creds.json");
+  fs.writeFileSync(credsPath, data, "utf-8");
+
+  await connectSession(sessionId, true);
+  
+  res.json({ success: true, message: "Session restore triggered successfully" });
+});
+
 // Disconnect session
 app.post("/engine/sessions/:sessionId/disconnect", async (req, res) => {
   const { sessionId } = req.params;
@@ -447,67 +498,7 @@ async function restoreSessions() {
     console.log(`[Engine] Found ${sessionIds.length} sessions to restore:`, sessionIds);
 
     for (const sessionId of sessionIds) {
-      const sessionDir = path.join(authRoot, sessionId);
-      
-      // Create session object in memory
-      const sessionObj = {
-        sessionId,
-        sock: null,
-        status: "pending",
-        qr: null,
-        phoneNumber: null,
-        expiresAt: null, // Restored sessions don't expire like QR scans
-      };
-      activeSessions[sessionId] = sessionObj;
-
-      const connect = async (isReconnect = false) => {
-        try {
-          // Try to load credentials from database if they don't exist locally
-          await loadCredsFromDatabase(sessionId, sessionDir);
-
-          const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-          const { version } = await fetchLatestBaileysVersion();
-          console.log(`[Engine] Restoring session ${sessionId} (reconnect: ${isReconnect}) using version ${version.join(".")}`);
-          
-          const sock = makeWASocket({
-            version,
-            auth: state,
-            printQRInTerminal: false,
-            syncFullHistory: false,
-            browser: Browsers.appropriate("Desktop"),
-          });
-
-          sessionObj.sock = sock;
-
-          sock.ev.on("creds.update", async () => {
-            await saveCreds();
-            await saveCredsToDatabase(sessionId, sessionDir);
-          });
-
-          sock.ev.on("connection.update", (update) => {
-            const { connection, lastDisconnect } = update;
-            if (connection === "close") {
-              const shouldReconnect = (lastDisconnect?.error?.output?.statusCode) !== DisconnectReason.loggedOut;
-              console.log(`[Engine] Restored connection closed for ${sessionId}. Reconnecting: ${shouldReconnect}`);
-              if (shouldReconnect) {
-                setTimeout(() => connect(true).catch(console.error), 3000);
-              } else {
-                sessionObj.status = "disconnected";
-                delete activeSessions[sessionId];
-                try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch (e) {}
-              }
-            } else if (connection === "open") {
-              sessionObj.status = "connected";
-              sessionObj.phoneNumber = sock.user.id.split(":")[0];
-              console.log(`[Engine] Restored session ${sessionId} successfully connected as ${sessionObj.phoneNumber}`);
-            }
-          });
-        } catch (e) {
-          console.error(`[Engine] Failed to restore session ${sessionId}:`, e);
-        }
-      };
-
-      connect(false).catch(console.error);
+      connectSession(sessionId, true).catch(console.error);
     }
   } catch (err) {
     console.error("[Engine] Error restoring sessions:", err);
