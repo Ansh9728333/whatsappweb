@@ -401,7 +401,31 @@ app.post("/engine/sessions/:sessionId/send", async (req, res) => {
       payload = { text: message };
     }
 
-    const sentMsg = await s.sock.sendMessage(formattedTo, payload);
+    let sentMsg;
+    let attempts = 0;
+    let currentSession = s;
+
+    while (attempts < 2) {
+      try {
+        if (!currentSession || !currentSession.sock || currentSession.status !== "connected") {
+          throw new Error("Connection Closed");
+        }
+        sentMsg = await currentSession.sock.sendMessage(formattedTo, payload);
+        break; // Successfully sent!
+      } catch (err) {
+        attempts++;
+        const isConnClosed = err.message && (err.message.includes("Connection Closed") || err.message.includes("closed") || err.message.includes("not opened"));
+        if (isConnClosed && attempts < 2) {
+          console.log(`[Engine] Send failed (attempt ${attempts}): ${err.message}. Waiting 2.5 seconds for Baileys auto-reconnect/handshake...`);
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          // Refresh session reference in case it was recreated
+          currentSession = activeSessions[sessionId];
+        } else {
+          throw err;
+        }
+      }
+    }
+
     res.json({
       success: true,
       messageId: sentMsg.key.id,
