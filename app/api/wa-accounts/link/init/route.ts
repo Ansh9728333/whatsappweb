@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       where: { customerId: session.customerId },
     });
 
-    const engineSessionId = account?.engineSessionId || `session_${uuidv4().substring(0, 18)}`;
+    const engineSessionId = `session_${uuidv4().substring(0, 18)}`;
 
     if (!account) {
       account = await prisma.whatsAppAccount.create({

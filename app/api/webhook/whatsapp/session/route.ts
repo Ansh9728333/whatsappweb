@@ -25,14 +25,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Account not found for session" }, { status: 404 });
     }
 
+    let phoneNumber: string | null = null;
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.me && parsed.me.id) {
+        phoneNumber = parsed.me.id.split(":")[0].split("@")[0];
+      }
+    } catch (e) {}
+
     await prisma.whatsAppSession.upsert({
       where: { sessionId },
-      update: { data, status: "ACTIVE" },
+      update: { data, status: "ACTIVE", ...(phoneNumber && { phoneNumber }) },
       create: {
         whatsappAccountId: account.id,
         sessionId,
         data,
-        status: "ACTIVE"
+        status: "ACTIVE",
+        phoneNumber
       }
     });
 

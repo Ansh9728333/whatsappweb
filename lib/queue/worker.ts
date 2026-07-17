@@ -15,66 +15,190 @@ console.log("🚀 Campaign worker starting...");
 const worker = new Worker<CampaignJobData>(
   "campaign-messages",
   async (job) => {
-    const { campaignId, recipientId, customerId, to, templateName, variables } = job.data;
+    const { campaignId, recipientId, customerId, to } = job.data;
 
-    console.log(`📤 Processing job ${job.id}: ${templateName} → ${to}`);
+    console.log(`📤 Processing job ${job.id} for Campaign ${campaignId} → ${to}`);
 
     let metaMessageId: string | undefined;
-    let status: "SENT" | "FAILED" = "SENT";
+    let status = "SENT";
     let errorMessage: string | undefined;
+    let requestPayload: any = {};
+    let responsePayload: any = {};
+    let activeSenderSessionId: string | null = null;
 
     try {
-      // Check if already sent (idempotency guard)
+      // 1. Idempotency guard: check if already sent
       const recipient = await prisma.campaignRecipient.findUnique({
         where: { id: recipientId },
       });
 
-      if (recipient?.status === "SENT" || recipient?.status === "DELIVERED" || recipient?.status === "READ") {
+      if (!recipient) {
+        throw new Error(`Recipient ${recipientId} not found`);
+      }
+
+      if (recipient.status === "SENT" || recipient.status === "DELIVERED" || recipient.status === "READ") {
         console.log(`⏭️  Skipping already-sent recipient ${recipientId}`);
         return { skipped: true };
       }
 
-      // 1. Fetch connected WhatsApp Account
-      const waAccount = await prisma.whatsAppAccount.findUnique({
-        where: { customerId },
-        select: { engineSessionId: true, status: true },
-      });
-
-      if (!waAccount || waAccount.status !== "CONNECTED" || !waAccount.engineSessionId) {
-        throw new Error("WhatsApp account not connected");
-      }
-
-      // 2. Fetch template details
+      // 2. Fetch Campaign details with senders
       const campaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
-        include: { template: true },
+        include: { senders: true },
       });
 
-      if (!campaign || !campaign.template) {
-        throw new Error("Campaign or template not found");
+      if (!campaign) {
+        throw new Error(`Campaign ${campaignId} not found`);
       }
 
-      // 3. Construct message by substituting variables in the body text
-      let messageText = campaign.template.bodyText;
-      if (variables) {
-        for (const [key, val] of Object.entries(variables)) {
-          messageText = messageText.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
+      // Pause/Cancel check
+      if (campaign.status === "PAUSED") {
+        console.log(`⏸️  Campaign ${campaignId} is PAUSED, skipping job.`);
+        return { status: "PAUSED" };
+      }
+      if (campaign.status === "CANCELLED") {
+        console.log(`⏹️  Campaign ${campaignId} is CANCELLED, skipping job.`);
+        return { status: "CANCELLED" };
+      }
+
+      // 3. Resolve Round Robin sender assignment
+      const activeSenders = campaign.senders.filter((s) => s.status === "ACTIVE");
+      if (activeSenders.length === 0) {
+        throw new Error("No active WhatsApp senders assigned to this campaign.");
+      }
+
+      // Determine index statelessly by counting preceding recipients
+      const precedingCount = await prisma.campaignRecipient.count({
+        where: { campaignId, id: { lt: recipientId } },
+      });
+      const assignedSender = activeSenders[precedingCount % activeSenders.length];
+      
+      activeSenderSessionId = assignedSender.sessionId;
+      let activeSenderPhone = assignedSender.phoneNumber;
+      let isReady = false;
+
+      // Import dynamic engine checkers to prevent circular import issues
+      const { ensureEngineSessionActive } = await import("../whatsapp/engine");
+
+      // Verify connection of assigned sender
+      const isPrimaryReady = await ensureEngineSessionActive(assignedSender.sessionId);
+      if (isPrimaryReady) {
+        isReady = true;
+      } else {
+        console.warn(`[Worker] Primary sender ${assignedSender.phoneNumber} disconnected. Seeking fallback...`);
+        // Iterate through fallback senders
+        for (const fallback of activeSenders) {
+          if (fallback.sessionId !== assignedSender.sessionId) {
+            const isFallbackReady = await ensureEngineSessionActive(fallback.sessionId);
+            if (isFallbackReady) {
+              activeSenderSessionId = fallback.sessionId;
+              activeSenderPhone = fallback.phoneNumber;
+              isReady = true;
+              
+              // Create Warning Campaign Log
+              await prisma.campaignLog.create({
+                data: {
+                  campaignId,
+                  recipientId,
+                  sessionId: assignedSender.sessionId,
+                  eventType: "WARNING",
+                  status: "WARNING",
+                  errorMessage: `Sender ${assignedSender.phoneNumber} was disconnected. Message re-routed to connected sender ${fallback.phoneNumber}.`,
+                },
+              });
+              break;
+            }
+          }
         }
       }
 
-      // 4. Send via Engine
-      const result = await sendEngineMessage(
-        waAccount.engineSessionId,
+      if (!isReady) {
+        // Log critical failure
+        await prisma.campaignLog.create({
+          data: {
+            campaignId,
+            recipientId,
+            sessionId: assignedSender.sessionId,
+            eventType: "ERROR",
+            status: "FAILED",
+            errorMessage: `Assigned sender ${assignedSender.phoneNumber} is disconnected and no active fallbacks are connected.`,
+          },
+        });
+        throw new Error(`WhatsApp sender ${assignedSender.phoneNumber} is disconnected and no connected fallbacks are available.`);
+      }
+
+      // 4. Construct message variables
+      let messageText = campaign.messageBody || "";
+      const customVars = (recipient.customData as Record<string, string>) || {};
+      const variablesMap: Record<string, string> = {
+        name: recipient.name || "",
+        phone: recipient.phoneNumber || "",
+        ...customVars,
+      };
+
+      for (const [key, val] of Object.entries(variablesMap)) {
+        const regex = new RegExp(`\\{\\{${key}\\}\\}`, "gi");
+        messageText = messageText.replace(regex, val || "");
+      }
+
+      // 5. Send message via Engine
+      const mediaTypeParam = campaign.messageType !== "TEXT" ? campaign.messageType.toLowerCase() : undefined;
+      requestPayload = {
+        sessionId: activeSenderSessionId,
         to,
-        messageText
+        message: messageText,
+        mediaUrl: campaign.mediaUrl || undefined,
+        mediaType: mediaTypeParam,
+      };
+
+      const result = await sendEngineMessage(
+        activeSenderSessionId,
+        to,
+        messageText,
+        campaign.mediaUrl || undefined,
+        mediaTypeParam
       );
 
       metaMessageId = result.messageId;
-      console.log(`✅ Sent to ${to}, Engine Message ID: ${metaMessageId}`);
+      responsePayload = result;
+      console.log(`✅ Sent message to ${to} via ${activeSenderPhone}, Engine Message ID: ${metaMessageId}`);
+
+      // Track messages sent per sender
+      await prisma.campaignSender.updateMany({
+        where: { campaignId, sessionId: activeSenderSessionId },
+        data: { messagesSent: { increment: 1 } },
+      });
+
+      // Save Success Campaign Log
+      await prisma.campaignLog.create({
+        data: {
+          campaignId,
+          recipientId,
+          sessionId: activeSenderSessionId,
+          eventType: "SEND",
+          status: "SENT",
+          requestPayload: requestPayload as any,
+          responsePayload: responsePayload as any,
+        },
+      });
+
     } catch (err: any) {
       status = "FAILED";
       errorMessage = err instanceof Error ? err.message : "Unknown error";
       console.error(`❌ Failed to send to ${to}:`, errorMessage);
+
+      // Save Error Campaign Log
+      await prisma.campaignLog.create({
+        data: {
+          campaignId,
+          recipientId,
+          sessionId: activeSenderSessionId || null,
+          eventType: "ERROR",
+          status: "FAILED",
+          requestPayload: requestPayload as any,
+          errorMessage,
+        },
+      });
 
       // If this is the final retry, update counters
       if (job.attemptsMade >= (job.opts.attempts ?? 3) - 1) {
@@ -94,23 +218,24 @@ const worker = new Worker<CampaignJobData>(
         campaignId,
         metaMessageId,
         direction: "OUTBOUND",
-        type: "TEXT",
-        status,
+        type: requestPayload.mediaUrl ? "IMAGE" : "TEXT",
+        status: status === "SENT" ? "SENT" : "FAILED",
         toPhone: to,
-        content: { text: variables ? templateName : "" } as any, // Save mapping reference
+        content: { text: requestPayload.message } as any,
         errorMessage,
         sentAt: status === "SENT" ? new Date() : undefined,
       },
     });
 
-    // Update recipient
+    // Update recipient record
     await prisma.campaignRecipient.update({
       where: { id: recipientId },
       data: {
         status: status === "SENT" ? "SENT" : "FAILED",
-        messageId: message.id,
+        assignedSessionId: activeSenderSessionId || null,
         errorMessage,
-        processedAt: new Date(),
+        sentAt: status === "SENT" ? new Date() : undefined,
+        messageRendered: requestPayload.message || null,
       },
     });
 
@@ -123,14 +248,14 @@ const worker = new Worker<CampaignJobData>(
       },
     });
 
-    // Log usage
+    // Log usage billing
     if (status === "SENT") {
       await prisma.usageLog.create({
         data: {
           customerId,
           messageId: message.id,
-          type: "TEXT",
-          cost: 0.005,
+          type: requestPayload.mediaUrl ? "MEDIA" : "TEXT",
+          cost: requestPayload.mediaUrl ? 0.01 : 0.005,
         },
       });
       await prisma.customer.update({

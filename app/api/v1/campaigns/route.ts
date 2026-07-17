@@ -21,12 +21,11 @@ export async function POST(request: NextRequest) {
   if (!isWithinLimit(ctx)) return limitExceededResponse();
 
   const body = await request.json();
-  const { name, templateId, recipients, variableMapping, scheduledAt } =
+  const { name, templateId, recipients, scheduledAt } =
     body as {
       name: string;
       templateId: string;
       recipients: { phone: string; variables?: Record<string, string> }[];
-      variableMapping?: Record<string, string>;
       scheduledAt?: string;
     };
 
@@ -34,19 +33,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "name, templateId, and recipients are required" }, { status: 400 });
   }
 
+  // Fetch template text to populate messageBody
+  const template = await prisma.messageTemplate.findFirst({
+    where: { id: templateId, customerId: ctx.customerId },
+  });
+
+  if (!template) {
+    return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  }
+
   const campaign = await prisma.campaign.create({
     data: {
       customerId: ctx.customerId,
       templateId,
       name,
+      messageBody: template.bodyText,
       status: scheduledAt ? "SCHEDULED" : "DRAFT",
-      variableMapping: (variableMapping ?? {}) as any,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
       totalRecipients: recipients.length,
       recipients: {
         create: recipients.map((r) => ({
-          phone: r.phone,
-          variables: (r.variables ?? {}) as any,
+          name: "API Recipient",
+          phoneNumber: r.phone,
+          normalizedPhone: r.phone.replace(/[\s\-\(\)\+]/g, ""),
+          customData: (r.variables ?? {}) as any,
           status: "PENDING",
         })),
       },

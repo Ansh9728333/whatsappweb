@@ -10,7 +10,11 @@ export default async function CampaignsPage() {
 
   const campaigns = await prisma.campaign.findMany({
     where: { customerId: session.customerId },
-    include: { template: { select: { name: true } } },
+    include: {
+      senders: true,
+      files: true,
+      _count: { select: { recipients: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
 

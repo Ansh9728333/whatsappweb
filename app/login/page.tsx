@@ -122,13 +122,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Demo credentials */}
-          <div className="mt-6 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-lg">
-            <p className="text-xs font-semibold text-emerald-400 mb-1">Demo credentials</p>
-            <p className="text-xs text-slate-400">Admin: admin@whatsify.local / Admin@1234</p>
-            <p className="text-xs text-slate-400">Customer: demo@acme.com / Demo@1234</p>
-          </div>
-
           <p className="mt-6 text-center text-sm text-slate-500">
             Don&apos;t have an account?{" "}
             <Link href="/signup" className="text-emerald-400 hover:text-emerald-300 font-medium transition-colors">

@@ -274,8 +274,8 @@ async function main() {
       customerId: demoCustomer.id,
       templateId: welcomeTemplate.id,
       name: "Welcome Campaign — Q1 2025",
+      messageBody: "Welcome to our platform!",
       status: "COMPLETED",
-      variableMapping: { "1": "Acme Corp", "2": "name" },
       startedAt: new Date("2025-01-15T10:00:00Z"),
       completedAt: new Date("2025-01-15T10:05:00Z"),
       totalRecipients: 10,
@@ -294,10 +294,12 @@ async function main() {
       data: {
         campaignId: demoCampaign.id,
         contactId: contact.id,
-        phone: contactData[i].phone,
-        variables: { "1": "Acme Corp", "2": contactData[i].name },
-        status: statuses[i] as "DELIVERED" | "READ" | "SENT" | "FAILED",
-        processedAt: new Date("2025-01-15T10:00:00Z"),
+        name: contactData[i].name,
+        phoneNumber: contactData[i].phone,
+        normalizedPhone: contactData[i].phone.replace(/[\s\-\(\)\+]/g, ""),
+        customData: { "1": "Acme Corp", "2": contactData[i].name } as any,
+        status: statuses[i],
+        sentAt: new Date("2025-01-15T10:00:00Z"),
       },
     });
   }

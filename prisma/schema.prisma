@@ -164,6 +164,7 @@ model WhatsAppSession {
   whatsappAccountId String
   sessionId         String          @unique
   status            String          // "ACTIVE" | "EXPIRED" | etc
+  phoneNumber       String?
   data              String          @default("")
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
@@ -352,6 +353,7 @@ model Message {
 enum CampaignStatus {
   DRAFT
   SCHEDULED
+  QUEUED
   RUNNING
   PAUSED
   COMPLETED
@@ -360,56 +362,123 @@ enum CampaignStatus {
 }
 
 model Campaign {
-  id              String         @id @default(cuid())
-  customerId      String
-  templateId      String?
-  name            String
-  status          CampaignStatus @default(DRAFT)
-  variableMapping Json?
-  scheduledAt     DateTime?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  totalRecipients Int            @default(0)
-  sentCount       Int            @default(0)
-  deliveredCount  Int            @default(0)
-  readCount       Int            @default(0)
-  failedCount     Int            @default(0)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                    String              @id @default(cuid())
+  customerId            String
+  templateId            String?
+  name                  String
+  messageType           String              @default("TEXT") // "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO"
+  messageBody           String?             @db.Text
+  mediaUrl              String?
+  status                CampaignStatus      @default(DRAFT)
+  minDelay              Int                 @default(5)
+  maxDelay              Int                 @default(10)
+  sleepEnabled          Boolean             @default(false)
+  messagesBeforeSleep   Int                 @default(50)
+  sleepDurationMinutes  Int                 @default(10)
+  shortenUrls           Boolean             @default(false)
+  scheduleType          String              @default("NOW") // "NOW" | "LATER"
+  scheduledAt           DateTime?
+  timezone              String              @default("Asia/Kolkata")
+  retryEnabled          Boolean             @default(false)
+  maxRetries            Int                 @default(2)
+  totalRecipients       Int                 @default(0)
+  validRecipients       Int                 @default(0)
+  sentCount             Int                 @default(0)
+  deliveredCount        Int                 @default(0)
+  readCount             Int                 @default(0)
+  repliedCount          Int                 @default(0)
+  failedCount           Int                 @default(0)
+  skippedCount          Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  startedAt             DateTime?
+  completedAt           DateTime?
 
-  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  template        MessageTemplate? @relation(fields: [templateId], references: [id])
-  recipients      CampaignRecipient[]
-  messages        Message[]
+  customer              Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  template              MessageTemplate?    @relation(fields: [templateId], references: [id])
+  recipients            CampaignRecipient[]
+  senders               CampaignSender[]
+  files                 CampaignFile[]
+  logs                  CampaignLog[]
+  messages              Message[]
 
   @@map("campaigns")
 }
 
-enum RecipientStatus {
-  PENDING
-  SENT
-  DELIVERED
-  READ
-  FAILED
-  SKIPPED
+model CampaignSender {
+  id           String    @id @default(cuid())
+  campaignId   String
+  sessionId    String    // WhatsAppAccount engineSessionId or id
+  phoneNumber  String
+  senderOrder  Int
+  messagesSent Int       @default(0)
+  status       String    @default("ACTIVE") // "ACTIVE" | "INACTIVE"
+  createdAt    DateTime  @default(now())
+
+  campaign     Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_senders")
 }
 
 model CampaignRecipient {
-  id          String          @id @default(cuid())
-  campaignId  String
-  contactId   String?
-  phone       String
-  variables   Json?
-  status      RecipientStatus @default(PENDING)
-  messageId   String?
-  errorMessage String?
-  processedAt DateTime?
-  createdAt   DateTime        @default(now())
+  id                String    @id @default(cuid())
+  campaignId        String
+  contactId         String?
+  name              String?
+  phoneNumber       String?
+  normalizedPhone   String?
+  customData        Json?     // JSONB mapping
+  assignedSessionId String?
+  status            String    @default("PENDING") // PENDING, PROCESSING, SENT, DELIVERED, READ, REPLIED, FAILED, SKIPPED, CANCELLED
+  retryCount        Int       @default(0)
+  errorCode         String?
+  errorMessage      String?
+  messageRendered   String?   @db.Text
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  repliedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
 
-  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contact     Contact?        @relation(fields: [contactId], references: [id])
+  campaign          Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact           Contact?  @relation(fields: [contactId], references: [id])
 
   @@map("campaign_recipients")
+}
+
+model CampaignFile {
+  id               String   @id @default(cuid())
+  campaignId       String
+  originalFileName String
+  fileUrl          String?
+  totalRows        Int      @default(0)
+  validRows        Int      @default(0)
+  invalidRows      Int      @default(0)
+  duplicateRows    Int      @default(0)
+  columnMapping    Json?    // JSONB column mapping
+  createdAt        DateTime @default(now())
+
+  campaign         Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_files")
+}
+
+model CampaignLog {
+  id              String   @id @default(cuid())
+  campaignId      String
+  recipientId     String?
+  sessionId       String?
+  eventType       String?  // "SEND" | "STATUS_UPDATE" | "ERROR"
+  status          String?
+  requestPayload  Json?    // JSONB
+  responsePayload Json?    // JSONB
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_logs")
 }
 
 // ─────────────────────────────────────────────

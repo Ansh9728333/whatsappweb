@@ -26,7 +26,7 @@ export const campaignQueue = new Queue<CampaignJobData>("campaign-messages", {
 
 /**
  * Enqueue all recipients for a campaign.
- * Rate-limited to stay within 80 msg/sec limit.
+ * Calculates randomized delay and campaign sleep periods dynamically.
  */
 export async function enqueueCampaign(
   campaign: {
@@ -37,23 +37,47 @@ export async function enqueueCampaign(
     language: string;
   }
 ): Promise<void> {
-  const jobs = campaign.recipients.map((recipient, index) => ({
-    name: "send-template",
-    data: {
-      campaignId: campaign.id,
-      recipientId: recipient.id,
-      customerId: campaign.customerId,
-      to: recipient.phone,
-      templateName: campaign.templateName,
-      language: campaign.language,
-      variables: recipient.variables,
-    } satisfies CampaignJobData,
-    opts: {
-      // Stagger jobs: 1 per ~12ms = ~80/sec
-      delay: Math.floor(index / 80) * 1000,
-      jobId: `campaign-${campaign.id}-${recipient.id}`, // Prevent duplicate sends
-    },
-  }));
+  const { prisma } = await import("@/lib/prisma");
+
+  const dbCampaign = await prisma.campaign.findUnique({
+    where: { id: campaign.id },
+  });
+
+  const minDelay = dbCampaign?.minDelay ?? 5;
+  const maxDelay = dbCampaign?.maxDelay ?? 10;
+  const sleepEnabled = dbCampaign?.sleepEnabled ?? false;
+  const messagesBeforeSleep = dbCampaign?.messagesBeforeSleep ?? 50;
+  const sleepDurationMinutes = dbCampaign?.sleepDurationMinutes ?? 10;
+
+  let currentDelayMs = 0;
+
+  const jobs = campaign.recipients.map((recipient, index) => {
+    // 1. Calculate randomized delay
+    const randomDelaySec = Math.random() * (maxDelay - minDelay) + minDelay;
+    currentDelayMs += randomDelaySec * 1000;
+
+    // 2. Add campaign sleep duration if applicable
+    if (sleepEnabled && index > 0 && index % messagesBeforeSleep === 0) {
+      currentDelayMs += sleepDurationMinutes * 60 * 1000;
+    }
+
+    return {
+      name: "send-template",
+      data: {
+        campaignId: campaign.id,
+        recipientId: recipient.id,
+        customerId: campaign.customerId,
+        to: recipient.phone,
+        templateName: campaign.templateName,
+        language: campaign.language,
+        variables: recipient.variables,
+      } satisfies CampaignJobData,
+      opts: {
+        delay: Math.round(currentDelayMs),
+        jobId: `campaign-${campaign.id}-${recipient.id}`, // Prevent duplicate sends
+      },
+    };
+  });
 
   await campaignQueue.addBulk(jobs);
 }
