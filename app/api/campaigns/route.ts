@@ -245,6 +245,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, { status: 201 });
   } catch (err: any) {
     console.error("Failed to create campaign:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    let errMsg = err.message || "An unknown error occurred";
+    if (errMsg.includes("Connection is closed") || errMsg.includes("closed") || errMsg.includes("ECONNREFUSED")) {
+      errMsg = "Redis is not running. Please start the Redis server (redis-server) locally or configure REDIS_URL in your .env file.";
+    }
+    return NextResponse.json({ error: errMsg }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 import IORedis from "ioredis";
 
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
+const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 
 // Singleton pattern for Next.js hot-reload
 const globalForRedis = globalThis as unknown as { redis: IORedis | undefined };

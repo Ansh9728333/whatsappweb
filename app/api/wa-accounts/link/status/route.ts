@@ -37,14 +37,11 @@ export async function GET(request: NextRequest) {
       .catch(() => ({ status: "disconnected", qrCode: null, phoneNumber: null }));
 
     // Self-healing: if the engine says disconnected but the DB says CONNECTED, try to restore!
-    if (result.status !== "connected" && account.status === "CONNECTED") {
-      console.log(`[Status API] Session ${account.engineSessionId} disconnected in engine, triggering self-healing restore...`);
-      const restored = await ensureEngineSessionActive(account.engineSessionId);
-      if (restored) {
-        result = await getEngineSessionStatus(account.engineSessionId)
+      const activeSessionId = await ensureEngineSessionActive(account.engineSessionId);
+      if (activeSessionId) {
+        result = await getEngineSessionStatus(activeSessionId)
           .catch(() => ({ status: "disconnected", qrCode: null, phoneNumber: null }));
       }
-    }
 
     let statusResponse = {
       status: result.status,

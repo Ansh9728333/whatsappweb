@@ -71,46 +71,84 @@ export async function restoreEngineSession(sessionId: string, credsData: string)
 
 /**
  * Ensures the engine has the session active by loading credentials from PostgreSQL on-demand.
- * Returns true if the session is active or restored, false otherwise.
+ * If the provided sessionId is not active, it attempts to find and restore any ACTIVE session for the account.
+ * Returns the active sessionId string if ready, or null if unrecoverable.
  */
-export async function ensureEngineSessionActive(sessionId: string): Promise<boolean> {
-  // We import prisma dynamically to avoid circular dependencies or initialization issues in client files
+export async function ensureEngineSessionActive(sessionId: string): Promise<string | null> {
   const { prisma } = await import("@/lib/prisma");
 
+  // 1. Check if the engine already has the provided session connected
   try {
-    // 1. Check if the engine already has the session connected
     const statusRes = await getEngineSessionStatus(sessionId);
     if (statusRes.status === "connected") {
-      return true;
+      return sessionId;
     }
   } catch (err) {
-    console.log(`[Engine Client] Session ${sessionId} not active in engine. Trying to restore from DB...`);
+    console.log(`[Engine Client] Session ${sessionId} not active in engine. Attempting restore...`);
   }
 
-  // 2. Fetch the credentials from the database
-  const session = await prisma.whatsAppSession.findUnique({
+  // 2. Fetch the credentials for this specific sessionId from DB
+  let session = await prisma.whatsAppSession.findUnique({
     where: { sessionId },
   });
 
-  if (!session || !session.data) {
-    console.log(`[Engine Client] No credentials found in database for session ${sessionId}`);
-    return false;
+  // 3. Fallback: If no credentials exist for this sessionId (e.g. engineSessionId was overwritten during a link init),
+  // search for ANY active session under the same WhatsApp account
+  if (!session || !session.data || session.status !== "ACTIVE") {
+    console.log(`[Engine Client] No active credentials for ${sessionId}. Searching for alternative active sessions...`);
+    
+    // Find WhatsApp account associated with this sessionId or customer
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: {
+        OR: [
+          { engineSessionId: sessionId },
+          { sessions: { some: { sessionId } } },
+        ],
+      },
+    });
+
+    if (account) {
+      const activeSession = await prisma.whatsAppSession.findFirst({
+        where: { whatsappAccountId: account.id, status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      });
+
+      if (activeSession && activeSession.data) {
+        session = activeSession;
+        console.log(`[Engine Client] Found alternative active session ${activeSession.sessionId} for account ${account.id}`);
+
+        // Self-heal account's engineSessionId reference
+        await prisma.whatsAppAccount.update({
+          where: { id: account.id },
+          data: { engineSessionId: activeSession.sessionId, status: "CONNECTED" },
+        }).catch(() => {});
+      }
+    }
   }
 
-  // 3. Push credentials to engine
+  if (!session || !session.data) {
+    console.log(`[Engine Client] No valid credentials found in database for session ${sessionId}`);
+    return null;
+  }
+
+  // 4. Push credentials to engine
+  const targetSessionId = session.sessionId;
   try {
-    await restoreEngineSession(sessionId, session.data);
+    await restoreEngineSession(targetSessionId, session.data);
     
-    // Wait a short moment for Baileys connection handshake (e.g. 2 seconds)
+    // Wait a short moment for Baileys connection handshake
     await new Promise((resolve) => setTimeout(resolve, 2000));
     
     // Check status again
-    const finalStatus = await getEngineSessionStatus(sessionId);
-    return finalStatus.status === "connected";
+    const finalStatus = await getEngineSessionStatus(targetSessionId);
+    if (finalStatus.status === "connected") {
+      return targetSessionId;
+    }
   } catch (restoreErr: any) {
-    console.error(`[Engine Client] Failed to restore session ${sessionId}:`, restoreErr.message);
-    return false;
+    console.error(`[Engine Client] Failed to restore session ${targetSessionId}:`, restoreErr.message);
   }
+
+  return null;
 }
 
 export async function sendEngineMessage(
@@ -121,12 +159,12 @@ export async function sendEngineMessage(
   mediaType?: string
 ): Promise<{ success: boolean; messageId: string }> {
   // Automatically ensure the session is active in the engine before sending
-  const isReady = await ensureEngineSessionActive(sessionId);
-  if (!isReady) {
+  const activeSessionId = await ensureEngineSessionActive(sessionId);
+  if (!activeSessionId) {
     throw new Error("WhatsApp account is not connected. Please go to the dashboard and reconnect.");
   }
 
-  return fetchEngine<{ success: boolean; messageId: string }>("POST", `/engine/sessions/${sessionId}/send`, {
+  return fetchEngine<{ success: boolean; messageId: string }>("POST", `/engine/sessions/${activeSessionId}/send`, {
     to,
     message,
     mediaUrl,

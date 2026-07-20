@@ -49,14 +49,17 @@ export async function POST(request: NextRequest) {
 
   const waAccount = await prisma.whatsAppAccount.findFirst({
     where: { customerId: session.customerId, status: "CONNECTED" },
+    include: { sessions: { where: { status: "ACTIVE" }, orderBy: { updatedAt: "desc" } } },
   });
   let metaMessageId: string | undefined;
   let status: "SENT" | "FAILED" = "SENT";
   let errorMessage: string | undefined;
 
-  if (waAccount && waAccount.engineSessionId) {
+  const activeSessionId = waAccount?.sessions[0]?.sessionId || waAccount?.engineSessionId;
+
+  if (activeSessionId) {
     try {
-      const result = await sendEngineMessage(waAccount.engineSessionId, conversation.contact.phone, text);
+      const result = await sendEngineMessage(activeSessionId, conversation.contact.phone, text);
       metaMessageId = result.messageId;
     } catch (err) {
       status = "FAILED";
